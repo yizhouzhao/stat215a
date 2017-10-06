@@ -1,0 +1,470 @@
+\documentclass{article}
+
+\usepackage{geometry}
+\geometry{verbose,tmargin=1in,bmargin=1in,lmargin=1in,rmargin=1in}
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\setlength{\parskip}{\smallskipamount}
+\setlength{\parindent}{0pt}
+\usepackage{amsthm}
+\usepackage{amsmath}
+
+\begin{document}
+
+\title{Lab 2 - Linguistic Survey\\
+Stat 215A, Fall 2017}
+
+
+\author{\\ SID:3032130362}
+
+\maketitle
+
+\section{Introduction}
+
+Dialectology is the scientific study of linguistic dialect. It studies variations in language based primarily on geographic distribution and their associated features. My study focus on the relationship between dialect with geography distribution, which based on the assumption that the language use of a person is influenced by his/her surroundings. \\  
+
+In Nerbonne and Kretzschmar's two papers, they both reviews that past study of dialect: featured questions and canonical studies were conducted by the dialiectologists systematically. However, the deliberate assumptions, different weight considerations, insightful formulas, together with the modern computational methods are among the most advanced techniques to help analysis dialects. My study applies the common dimension-reduction and clustering methods to analysis the geographic effect on dialect. The main tool for programming is R, but Python, which is more effective is also used to get the Silhouette scores and to develop the interactive web application.
+
+
+<<read_library, cache=FALSE, echo=FALSE, message=FALSE>>=
+library(ggplot2)
+library(dplyr)
+
+setwd("E:/courses/Stat215A/lab2/data")
+source("E:/courses/Stat215A/lab2/R/quote.R") #for plot  
+
+#load in data
+lingData <- read.table('lingData.txt', header = T)
+lingLocation <- read.table('lingLocation.txt', header = T)
+load("question_data.RData")
+
+opts_chunk$set(fig.pos='h!', fig.align='center', echo=FALSE, message=FALSE)
+@
+
+
+\section{The Data}
+Overall, the data is of good quality. \textit{lingData.txt} contains the geographic information and the answers from the respondents. $1020$ lines of missing values are found and some the names of states/cities are totally wrong, such as Flatbush(Brooklyn)andWyanda, fhhjdhj and etc. Interestingly, some the name of the cities in the table do not match the zip codes, which is compared with the \textit{zipcode} package. For longitude and latitude, some of the data were collected in Alaska or Hawaii, the number of samples from there are too sparse to make a difference on the whole data set(only $1.06\%$). \\  
+
+<<check lingData.txt, echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE>>=
+## install.packages("zipcode")
+require(zipcode)
+data(zipcode)
+colnames(zipcode) = c("ZIP","city","state","lat","long")
+lingData$ZIP = as.integer(lingData$ZIP)
+zipcode$ZIP = as.integer(zipcode$ZIP)
+check = lingData %>% left_join(zipcode,by="ZIP")
+
+check <- mutate(check, long.diff = abs(long.y-long.x), lat.diff = abs(lat.x-lat.y))
+
+wrong_diff = filter(check, is.na(long.diff) | is.na(lat.diff))
+#which is a 1020x79 data.frame, there are 1020 rows missing lat/long information
+wrong_state = filter(check, tolower(gsub(" ","",state)) != tolower(STATE) | tolower(gsub(" ","",city)) != tolower(CITY))
+#some of the city name are definitely wrong or missing, such as,Flatbush(Brooklyn)andWyanda,
+#fhhjdhj,...
+@
+
+The \textit{lingLocation.txt} file is a complete dataset: no missing values and no obvious outliers. Ideally, every participant should answer exactly 67 questions, but it is not the case. Figure one shows that in some places participants answered less than 40 questions on average, while most places answered more than 60 questions.
+
+Finally, the \textit{question\_data.RData} shows the answers corresponding to the questions.Ummm....nothing special.
+
+<<check lingLocation, echo = FALSE, message=FALSE, warning=FALSE, fig.height=3>>=
+#check lingLocations
+check_location = lingLocation %>% mutate(population=rowSums(.[4:471])) %>% select(population,Number.of.people.in.cell)
+check_location$ans = check_location$population/check_location$Number.of.people.in.cell
+
+ggplot(data = check_location) + geom_histogram(aes(x = ans),bin= 20)+
+  xlab("number of questions answered") + ggtitle("# Ques. Distribution")
+@
+Figure 1: Histogram for the average number of questions answered in each location: more than 95\% of the places with the participants answering more than 60 questions.   
+
+
+\subsection{Data quality and cleaning}
+
+This dataset isn't as bad as the redwood data, but there are still
+some issues. You should discuss them here and describe your strategies
+for dealing with them.
+
+
+\subsection{Exploratory Data Analysis}
+
+First, I selected one of the questions and its answers to get an intuitive impression. Some of the questions do not have large differences with respect to the locations. Question 80: \textit{What do you call it when rain falls while the sun is shining?} has totally eleven different answers. The most common answers are: \textit{liquid sun, money's wedding, sunshower and the devil is beating his wife}. One of the most significant pattern here is a north verse south trend. The answers \textit{sunshower} were mostly found in the northeast part, while \textit{the devil is beating his wife} mainly found in the southeast part of U.S.
+
+<<EDA1>>=
+#install maps package for geography information
+#install.packages("maps")
+require(maps)
+state <- map_data("state")
+
+#Examine question 80 for data analysis
+#
+answer80 = all.ans[['80']]
+answer80$Q080 = as.character(1:length(answer80$ans))
+
+sunny.rain = lingData %>% select(Q080,lat,long)
+# Make the column to join on.  They must be the same type.
+answer80$Q080 <- rownames(answer80)
+sunny.rain$Q080 <- as.character(sunny.rain$Q080)
+sunny.rain <- left_join(sunny.rain, answer80, by="Q080")
+
+#plot
+ggplot(data=NULL) +
+  geom_point(data=sunny.rain %>% 
+  filter(long > -120, Q080 %in% c(1,3,7,4)), aes(x=long, y=lat, color=ans), size=1, alpha=0.75) +
+  geom_polygon(data=state, colour = "black", fill = NA, aes(x=long, y=lat, group=group))+
+  facet_wrap(~ans, ncol=2)+theme_bw() +theme(legend.position = "bottom")
+@
+Figure 2: Scatter plot of the answers of Question 80. 
+
+<<EDA plot, warning=FALSE>>=
+ggplot(data=NULL) +
+  geom_point(data=sunny.rain %>% filter(long > -120, Q080 %in% 1:8 ), aes(x=long, y=lat, color=ans), size=1, alpha=0.75) +
+  geom_polygon(data=state, colour = "black", fill = NA, aes(x=long, y=lat, group=group))+
+theme_bw() +theme(legend.position = "bottom")
+@
+Figure 3: the aggregated plot of question 80. It is more clear than there is north verse south trend. Also the answer \textit{I have no term or expression for this} is actually a large group, which is not analyzed in figure two. 
+
+Figure 3 shows a more clear separation: northeast, west and south. The locations of the highest population(number of participants in the study) density are shown in figure 4: New York, Chicago, Houston, Los Angeles and etc. Although the east coast shares a small fraction of areas of U.S., the population there is so large to be representative to form a dialect group.   
+
+<<densityplot,fig.height=4,fig.width=5>>=
+ggplot(data = sunny.rain %>% filter(long > -120),aes(x = long, y = lat))+
+    geom_density2d() + geom_polygon(data=state, colour = "black", fill = NA, aes(x=long, y=lat, group=group))+
+    theme_bw()
+@
+Figure 4: Population density contour. The blue circles point out the locations with the highest population density.
+
+
+\section{Dimension reduction methods}
+
+In this part, I will discuss and show plots about the results of the dimension reduction techniques I tried: main PCA, hierarchical,K-means, random projections, etc.
+\begin{itemize}
+  \item PCA: original lingData has 47471 rows of observations and after being converted to binary data, it has 468 columns as the answers to the questions. I tried the PCA with scaling and PCA without scaling. To scale the data in this binary case has little reason. And the results of those two PCAs further justified that the non-scaling one is much better, which required about 160 principal components to explain 90\% of the variance, while the scaling one needs about 330. 
+  \item Kmeans: the methods for kmeans I tried first in the default \textit{kmeans} function in R. Several numbers of clusters were tried to get different results. The \textit{pamk or clusGap} function in the cluster or fpc package, which is used to determine the best number of cluster, is unfeasible here because of the little RAM of my laptop(even after random sampling to 10000). 
+  \item Determine the number of clusters and number of Principal components: the Silhouette scores for clustering are calculated in Python. And I also tried to use different number of principal components for clustering. Interestingly, the clustering results from two principal components have sometimes(kmeans is not stable )little differences from the results of 155 components, even though the first two components explain little of the variance.
+  
+
+<<PCA,kmeans, warning=FALSE>>=
+#binarize the question
+binarize = function(data,column) {
+  B <- data.frame(index=1:nrow(data))
+  for (i in 1:max(data[[column]])) {
+    B[, paste0(column,i)] <- ifelse( data[[column]]==i,1,0)
+  }
+  return(select(B, -(index)))
+}
+
+questions= colnames(lingData)[5:71]
+B = binarize(lingData,questions[1])
+for(name in questions[2:67]){
+  B = cbind(B,binarize(lingData,name))
+}
+
+pca1 = prcomp(B)
+score1 = data.frame(pca1$x)
+pca1$cumsd = cumsum(pca1$sdev^2)
+pca1$cumsd = pca1$cumsd/sum(pca1$sdev^2)
+# about 160 elements to make up 90% of the total variation
+# about 100 to make up 80%
+
+
+#use pca1 for clustering and analysis
+forcluster = score1[,1:155] 
+
+#kmeans clustering
+
+k4 = kmeans(forcluster,4)
+k6 = kmeans(forcluster,6)
+k8 = kmeans(forcluster,8)
+k10 = kmeans(forcluster,10)
+
+
+plot.data <- cbind(lingData, 
+                   PC1 = pca1$x[,1],PC2 = pca1$x[,2],
+                   kmeans4 = as.factor(k4$cluster), kmeans6 = 
+                   as.factor(k6$clust), kmeans8 = as.factor(k8$cluster),                kmeans10 = as.factor(k10$clust))
+
+p1 = ggplot(data=NULL) +
+  geom_point(data=filter(plot.data, long > -120), aes(x=long, y=lat, color=kmeans4), size=1, alpha=0.75) +
+  geom_polygon(data=state, colour = "black", fill = NA, aes(x=long, y=lat, group=group)) 
+
+p2 = ggplot(data=NULL) +
+  geom_point(data=filter(plot.data, long > -120), aes(x=long, y=lat, color=kmeans6), size=1, alpha=0.75) +
+  geom_polygon(data=state, colour = "black", fill = NA, aes(x=long, y=lat, group=group)) 
+
+p3 = ggplot(data=NULL) +
+  geom_point(data=filter(plot.data, long > -120), aes(x=long, y=lat, color=kmeans8), size=1, alpha=0.75) +
+  geom_polygon(data=state, colour = "black", fill = NA, aes(x=long, y=lat, group=group)) 
+
+p4 = ggplot(data=NULL) +
+  geom_point(data=filter(plot.data, long > -120), aes(x=long, y=lat, color=kmeans10), size=1, alpha=0.75) +
+  geom_polygon(data=state, colour = "black", fill = NA, aes(x=long, y=lat, group=group)) 
+@
+
+<<plot,fig.height=5>>=
+require(gridExtra)
+grid.arrange(p1, p2,p3,p4,ncol=2)
+@
+Figure 5: Kmeans with different groups. 
+
+I used PCA for dimension reduction on the linguistic data set and it performed very well as expected. The burglarizing step projects the original data set into a higher dimension, which leads to sparsity. Of the 468 dimensions, I picked up the first 155 dimensions for analysis, and then performed kmeans of 4, 6, 8, 10 groups for clustering. Figure 5 shows that different groups have the similar general pattern: we can find at least three different areas(northeast, southeast and the rest.) Some of the clusters show a clear difference between the central United States and other places. After that, I did the same kind of clustering base only on the first two components, which account for only $7.5\%$ of the total variance. Figure 7 compares the clustering results from the two ways. Similar geographical distributions were found: northeast, south, middle and west, which confirms the findings in the previous study. 
+
+<<First two component comparison>>=
+#compare 2 component
+p1 = ggplot(plot.data,aes(x = PC1,y=PC2))+geom_point(aes(color = kmeans6))+
+  theme_classic()
+
+
+forcluster2 = score1[,1:2] 
+k6.2 = kmeans(forcluster2,6)
+
+plot.data.2 <- cbind(lingData, 
+                   PC1 = pca1$x[,1],PC2 = pca1$x[,2],
+                   kmeans6 = as.factor(k6.2$cluster))
+
+p2 = ggplot(plot.data.2,aes(x = PC1,y=PC2))+geom_point(aes(color = kmeans6))+
+  theme_classic()
+
+p3 = ggplot(data=NULL) +
+  geom_point(data=filter(plot.data, long > -120), aes(x=long, y=lat, color=kmeans6), size=1, alpha=0.75) +
+  geom_polygon(data=state, colour = "black", fill = NA, aes(x=long, y=lat, group=group)) +
+  theme(legend.position = "bottom")
+
+p4 = ggplot(data=NULL) +
+  geom_point(data=filter(plot.data.2, long > -120), aes(x=long, y=lat, color=kmeans6), size=1, alpha=0.75) +
+  geom_polygon(data=state, colour = "black", fill = NA, aes(x=long, y=lat, group=group)) +
+  theme(legend.position = "bottom")
+@
+
+<<plot.compare,fig.height=4>>=
+grid.arrange(p1,p2,ncol=2)
+@
+Figure 6: clustering comparison between 155 components and 2 components. As the kmeans method is unstable. The plot may vary each time. 
+
+<<plot.compare2,fig.height=4>>=
+grid.arrange(p3,p4,ncol=2)
+@
+Figure 7: clustering comparison on map between 155 components and 2 components. Even though the kmeans method is unstable, those two both catch the geographic differences for dialects.
+
+Another interesting finding came from clustering the lingLocation data set. I
+implemented the \textit{pam} with manhattan distance, compared with the Euclid distance, and both of them worked well. 
+
+<<lingLocation>>=
+require(cluster)
+##state PCA part: lingLocations
+anszip = lingLocation[4:471]
+anszip = t(apply(anszip,1,function(x){x/sum(x)}))
+
+pca3 <- prcomp(anszip, scale = F, center = F)
+#first ten principle components account for for more than 85% 
+#
+
+forcluster2 = pca3$x[,1:10]
+
+zip4m = pam(forcluster2,4,metric = "manhattan")
+zip4 = pam(forcluster2,4)
+zip6 = kmeans(forcluster2,6)
+zip8 = kmeans(forcluster2,8)
+zip10 = kmeans(forcluster2,10)
+
+plot.data2 = data.frame(lat = lingLocation$Latitude,
+                        long = lingLocation$Longitude,
+                        PC1 = pca3$x[,1],PC2 = pca3$x[,2],
+                        kmeans4 = as.factor(zip4$cluster),kmeans6=as.factor(zip6$cluster),
+                        kmeans8 = as.factor(zip8$cluster),kmeans10=as.factor(zip10$cluster),
+                        manhattan4 = as.factor(zip4m$cluster))
+
+p1 = ggplot(data=NULL) +
+  geom_point(data=plot.data2 %>% filter(long > -120), aes(x=long, y=lat, color=kmeans4), size=2, alpha=0.75) +
+  geom_polygon(data=state, colour = "black", fill = NA, aes(x=long, y=lat, group=group))+
+  theme_bw()+theme(legend.position = "bottom")
+
+p2 = ggplot(data=NULL) +
+  geom_point(data=plot.data2 %>% filter(long > -120), aes(x=long, y=lat, color=manhattan4), size=2, alpha=0.75) +
+  geom_polygon(data=state, colour = "black", fill = NA, aes(x=long, y=lat, group=group))+
+  theme_bw()+theme(legend.position = "bottom")
+@
+
+<<metric comparison, fig.height=4>>=
+grid.arrange(p1,p2,ncol = 2)
+@
+Figure 8: comparison between Manhattan and Euclid metric from the pam function. The four-cluster case is presented here and the clustering results are similar to each other.
+
+In this part, I will answer the following question:
+what questions separate the groups? I tried several ways to answer it and I finally come to borrow the idea of the information theory(or decision tree) I assume that the four-group kmeans clustering results as the label of the data, and the 67 questions are the features. For each question, I looked the empirical mutual information of between the label and such question, that is
+$$
+I(Question,Label) = \sum_x\sum_yp(x,y)log(\frac{p(x,y)}{p(x)p(y)}) = H(Label)-H(Label|Question)
+$$
+
+<<mutual info, warning=FALSE>>=
+#mutral information
+#
+require(infotheo)
+
+#get mutral information
+MI = vector()
+for(i in 5:71){
+  MI[i-4] = multiinformation(plot.data[,c(i,76)],method = "emp")
+}
+
+names(MI) = colnames(plot.data)[5:71]
+#get the rank for questions
+MI = sort(MI)
+@
+\begin{table}[h]
+\centering
+\begin{tabular}{ c | c | c | c}
+  Question & Highest Mutual Information&Question&Lowest Mutual Information\\
+  Q073 & 0.36 &Q092&0.07\\
+  Q105 & 0.33 &Q057&0.10\\
+  Q076 & 0.28 &Q121&0.10\\
+  Q106 & 0.26 &Q055&0.11\\
+\end{tabular}
+\caption{Rank of questions by mutual information}
+\end{table}
+
+<<question sep, fig.height=4>>=
+p1 = ggplot(data=NULL) +
+  geom_point(data=plot.data %>% filter(long > -120), aes(x=long, y=lat, color=as.factor(Q073)), size=1, alpha=0.75) +
+  geom_polygon(data=state, colour = "black", fill = NA, aes(x=long, y=lat, group=group))+theme_bw()+theme(legend.position = "bottom")
+
+p2 = ggplot(data=NULL) +
+  geom_point(data=plot.data %>% filter(long > -120), aes(x=long, y=lat, color=as.factor(Q092)), size=1, alpha=0.75) +
+  geom_polygon(data=state, colour = "black", fill = NA, aes(x=long, y=lat, group=group))+theme_bw()+theme(legend.position = "bottom")
+
+grid.arrange(p1,p2,ncol=2)
+@
+Figure 9: Answers from question 073 and 092. Left panel, Q073 gives a clear separation of dialect groups, while the right one, Q092 gives little information.
+\end{itemize}
+
+
+\section{Stability of findings to perturbation}
+In this part, I added some random noise the scaled lingLocation data to see how sensitive is the pca-kmeans method. I tried the noise level of $0.001,0.01,0.1 and 1$ and turned out that the $0.01$ case is not strong enough to make large difference to the clustering results. However, $0.1$ case is enough to make the clustering totally a mess.  
+
+I also found the kmeans function is unstable with the results vary time to time. A better approach to solve this is to use a more stable function, for example, \textit{pam} in the \textit{clusting} package or \textit{kmeanspp} in the \textit{pracma} package. 
+
+<<perturbation>>=
+#pertabation and random noise
+set.seed(10772)
+k4.0 = kmeans(forcluster2,4)
+p4.0 = pam(forcluster2,4)
+Noisify <- function(data,strength) {
+  if (is.vector(data)) {
+    noise <- runif(length(data), -strength, strength)
+    noisified <- data + noise
+  } else {
+    length <- dim(data)[1] * dim(data)[2]
+    noise <- matrix(runif(length, -strength, strength), dim(data)[1])
+    noisified <- data + noise
+  }
+  return(noisified)
+}
+
+
+k4.1 = kmeans(Noisify(forcluster2,0.001),4)
+e1 = entropy(k4.1$cluster,method = "emp")
+
+k4.2 = kmeans(Noisify(forcluster2,0.01),4)
+e2 = entropy(k4.2$cluster,method = "emp")
+
+k4.3 = kmeans(Noisify(forcluster2,0.1),4)
+e3 = entropy(k4.3$cluster,method = "emp")
+
+k4.4 = kmeans(Noisify(forcluster2,1),4)
+e4 = entropy(k4.4$cluster,method = "emp")
+
+plot.data3 = data.frame(lat = lingLocation$Latitude,
+                        long = lingLocation$Longitude,
+                        original = as.factor(k4.0$cluster),
+                        noise_0.01 = as.factor(k4.2$cluster),
+                        noise_0.1 = as.factor(k4.3$cluster))
+
+
+p1 = ggplot(data=NULL) +
+  geom_point(data=plot.data3 %>% filter(long > -120), aes(x=long, y=lat, color=original), size=2, alpha=0.75) +
+  geom_polygon(data=state, colour = "black", fill = NA, aes(x=long, y=lat, group=group))+
+  theme_bw()+theme(legend.position = "bottom")
+
+p2 = ggplot(data=NULL) +
+  geom_point(data=plot.data3 %>% filter(long > -120), aes(x=long, y=lat, color=noise_0.01), size=2, alpha=0.75) +
+  geom_polygon(data=state, colour = "black", fill = NA, aes(x=long, y=lat, group=group))+
+  theme_bw()+theme(legend.position = "bottom")
+
+p3 = ggplot(data=NULL) +
+  geom_point(data=plot.data3 %>% filter(long > -120), aes(x=long, y=lat, color=noise_0.1), size=2, alpha=0.75) +
+  geom_polygon(data=state, colour = "black", fill = NA, aes(x=long, y=lat, group=group))+
+  theme_bw()+theme(legend.position = "bottom")
+@
+
+<<noise,fig.height=3.5>>=
+grid.arrange(p1,p2,p3,ncol = 3)
+@
+Figure 10: left panel is the original kmeans clustering; middle panel for noise of 0.01 level and right panel for the noise of 0.1 level. 
+
+
+\section{Conclusion}
+Computational methods, which are applied to the linguistics survey dataset, reveals a surprising amount of information about the geographic differences
+of dialect differences. PCA and kmeans turn out to be very strong and meaningful to conduct dimension reduction and clustering, even though the later is lack of stability and sensitive to random noise to some extent. Other methods may make improvement, such as random projection or hierarchical clustering.
+
+
+\section{Kernel density plots and smoothing}
+<<kernel density,warning=FALSE,fig.height=4>>=
+setwd("E:/courses/Stat215A/lab2/data")
+redwood = read.csv("sonoma-data-all.csv")
+
+p1 = ggplot(data = redwood,aes(x = humid_temp)) + 
+  stat_density(bw=0.5,kernel="gaussian",alpha = 0.5)+
+  xlim(c(0,40))
+
+p2 = ggplot(data = redwood,aes(x = humid_temp)) + 
+  stat_density(bw=1,kernel="gaussian",alpha = 0.5)+
+  xlim(c(0,40))
+
+p3 = ggplot(data = redwood,aes(x = humid_temp)) + 
+  stat_density(bw=0.5,kernel="triangular",alpha = 0.5)+
+  xlim(c(0,40))
+
+p4 = ggplot(data = redwood,aes(x = humid_temp)) + 
+  stat_density(bw=1,kernel="triangular",alpha = 0.5)+
+  xlim(c(0,40))
+
+grid.arrange(p1,p2,p3,p4,ncol=2)
+@
+Figure 11: the histogram of temperature smoothed by different kernels and bandwidth. Left upper panel:Gaussian kernel with bw=0.5, upper right: kernel with bw=1; lower left: triangular bw=0.5; lower right: triangular bw=1.\\
+
+<<loess,warning=FALSE,fig.height=4>>=
+temp_humid = redwood %>% filter(epoch %% 288 == 12,!is.na(humidity)
+                                ,!is.na(humid_temp)) %>% select(humidity,humid_temp)
+
+p1 = ggplot(data = temp_humid,aes(x = humidity,y = humid_temp)) + 
+  geom_point() + xlim(c(0,100)) + ylim(0,30) +
+  geom_smooth(method = 'loess',formula = y~log(x))
+
+p2 = ggplot(data = temp_humid,aes(x = humidity,y = humid_temp)) + 
+  geom_point() + xlim(c(0,100)) + ylim(0,30) +
+  geom_smooth(span=0.1,method = 'loess')
+
+p3 = ggplot(data = temp_humid,aes(x = humidity,y = humid_temp)) + 
+  geom_point() + xlim(c(0,100)) + ylim(0,30) +
+  geom_smooth(formula = y ~ poly(x, 2),method = 'loess')
+
+
+p4 = ggplot(data = temp_humid,aes(x = humidity,y = humid_temp)) + 
+  geom_point() + xlim(c(0,100)) + ylim(0,30) +
+  geom_smooth(formula = y ~ poly(x,3),method = 'loess')
+
+grid.arrange(p1,p2,p3,p4,ncol=2)
+@
+Figure 12: loess smoothing of temperature against humidity. Upper left panel: loess with formula y~log(x): loess with formula y~x and span 0.1 ; lower left: loess with the polynomial of two degree; lower right: loess with the polynomial of three degree. I found the log transformation in the upper left panel fitted really very well. However, the high-degree polynomials suffer a lot from over-fitting.
+
+\section{Appendix: coding by Python}
+The following figure*(see file .extra/silhouette.png) shows the silhouette plot to determine the best number of clusters. This part is performed by Python. Because of the page limit, I only give the case when $k=4$.
+
+
+The html file(see link www.soarya.org/interactive, if the link is lost, see file .extra/interactive.html) is an interactive plot to show the answers for question 73 and question 81. In this interactive plot, you can do:
+\begin{itemize}
+\item move the plot
+\item zoom the plot by selecting the wheel button on the left toolbar
+\item zoom the plot by selecting the cut-zoom button on the left toolbar
+\item hide/show the answers by clicking the legends on the bottom-right corner.
+\end{itemize}
+
+\end{document}
