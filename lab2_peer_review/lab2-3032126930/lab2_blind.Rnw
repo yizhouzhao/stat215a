@@ -1,0 +1,454 @@
+\documentclass{article}
+
+\usepackage{geometry}
+\geometry{verbose,tmargin=1in,bmargin=1in,lmargin=1in,rmargin=1in}
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\setlength{\parskip}{\smallskipamount}
+\setlength{\parindent}{0pt}
+\usepackage{amsthm}
+\usepackage{amsmath}
+\usepackage{graphicx}
+
+\graphicspath{ {extra/} }
+
+\setlength\parindent{24pt}
+
+\begin{document}
+
+\title{Lab 2 \\
+Stat 215A, Fall 2017}
+
+
+\author{SID: 3032126930}
+
+\maketitle
+
+<<setup, echo = FALSE, message=FALSE, warning=FALSE, cache = TRUE>>=
+# load in useful packages
+library(tidyverse)
+library(lubridate)
+library(stringr)
+library(crosstalk)
+library(leaflet)
+library(DT)
+library(d3scatter)
+library(VGAM)
+library(gridExtra)
+library(ggplot2)
+
+# load in the loadData() functions
+source(file = "R/load.R")
+# load in the cleanData() functions
+source(file = "R/clean.R")
+
+@
+
+Plots are at the end of the report.
+
+\section{Kernel Density Plots and Smoothing}
+
+\subsection{Kernel density estimation}
+
+\indent If we take a look at the Figure 1, since the data has pretty concentrated values, choice of the kernel function didn't affect much determining the shape of the estimated density. The bandiwdth determined the smoothness of the density graph, but did not change the overall shape of the density much.\\
+
+
+
+
+\subsection{LOESS}
+
+\indent If we take a look at the Figure 2, LOESS smoother fits well when I used linear function (blue line on the graph) even with the small span. However, when I used the polynomial with degree 3 (red line on the graph), it overfitted with the small span and even with the large span, it didn't converge to the well-fitted curve. From this, we can learn that the choice of the degree of the polynomials is very important to avoid the overfitting.\\
+
+\section{Linguistic Survey}
+
+
+\subsection{Introduction}
+\indent This part of the report will examine the linguistic data from a Dialect Survey conducted by Bert Vaux. We are going to study lexical differences between different parts of the country. Since there are many questions and many answers for those questions in the survey, we are going to use dimension reduction technique to analyze the data. 
+
+\subsection{The Data}
+\indent The data we are going to study was found from a Dialect Survey conducted by Bert Vaux. The data was processed accordingly by an intrepid STAT 215 student past. Since we are only interested in lexical differences not the phonetic differences, we are going to study the part of the survey questions.
+
+
+\subsubsection{Data quality and cleaning}
+\indent The dataset is already processed pretty fine, but there are still some issues. What I found out is that the some of the data include states that are not in the country. Since they don't have accurate geological information, I excluded them. Also a few questions in Q50 to Q121 were left out. I had to be careful about that when I used information from the complete dataset for the questions and the answers. Some of the data had NA for latitude and longtitude. since it's hard to get a visualization of them, I also excluded them.
+
+
+<<load_data, echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE>>=
+
+# Loading and cleaning data
+load("./data/question_data.RData")
+ling_data <- loadLingData(path = "./data/")
+ling_location <- loadLingLocation(path = "./data/")
+miss_q <- c(108, 112, 113, 114, 116)
+
+num_answer <- vector()
+
+for (i in 50:121){
+  if(!(i %in% miss_q)){
+  num_answer <- append(num_answer, dim(all.ans[[i]])[1])
+  }
+}  
+
+data("state")
+
+ling_data <- filter(ling_data, STATE %in% state.abb)
+ling_data <- filter(ling_data, !(is.na(lat)) & !(is.na(long)))
+
+
+@
+
+
+\subsubsection{Exploratory Data Analysis}
+\indent Most of the questions show tendency of most regions dominated by one answer and the small SouthEast regions dominated by another answer in the map. For example, this is the distributions of answers for Q080 and Q100.\\
+\\
+\includegraphics{80vs100.png}\\
+\\
+\indent As you can see, SouthEast regions show clearly different color from the other regions. It also makes sense intuitively. Since we are living in one country, there is a specific word that's used by most of the people in the country. If one region uses dialect that is different from the other regions of the country, then that region is most likely to choose different answer for the survey questions.\\
+Of course there are some questions that showed different tendency. For example, Q085 and Q090 showed many different answers spreaded across the country.\\
+\\
+\includegraphics{85vs90.png}\\
+\\
+\indent Q110 and Q055 had other regions than SouthEast region that showed 2nd popular answer.\\
+\\
+\includegraphics{110vs55.png}\\
+\indent But the most of the responses to the survey questions showed the similar patterns.\\
+\\
+\indent Since there is a tendency across the data, studying a response to one question will help predict the other questions in the survey.\\
+\\
+\indent I comment out the code to produce the map plots, so if you want, you can produce the same results using the code I comment out.
+
+
+<<eda, echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE>>=
+### Cdoe to produce map plots
+
+#shared_ling_data <- SharedData$new(ling_data)
+
+#factpal <- colorFactor(rainbow(15), shared_ling_data$Q050)
+
+#bscols(
+#leaflet(shared_ling_data) %>% addTiles() %>% addCircleMarkers(radius = ~6, color = ~factpal(Q073), stroke = FALSE,fillOpacity = 0.5), leaflet(shared_ling_data) %>% addTiles() %>% addCircleMarkers(radius = ~6, color = ~factpal(Q103), stroke = FALSE,fillOpacity = 0.5)
+#)
+
+
+@
+
+
+\subsection{Dimension reduction methods}
+
+\indent To do the analysis with the whole data, not just with one question at a time, I first changed data that had categorical responses to have binary responses and performed PCA on it to reduce the dimension of the data. After that, to determine how many principal components to use, I made the screeplot, which is Figure 3. However, if you take a look at Figure 3, we need much more than 2 principal components to successfully catch most of the variance of the data. But for the visualization purpose, I only used first two principal components.\\
+\indent After that, to check how the geological factors affect the responses for the survey, I gave the colors to the dimension reduced data according to the latitude, longitude and zip code. I first guessed the longitude and the latitude information will explain the lexical differences between people. However, the plots given color according to the longitude and latitude didn't show clear explanation. Instead, when I gave color using zip codes to the plot using first two principal components, I could see the clear gradients of color throughout the data. Figure 4 contains the plot of this. The color changes smoothly as zip code goes bigger, which shows continuum. It means that the lexical difference between people is explained by zip code. Actually, this agrees with the exploratory data analysis we did on section 2.2.2 using plots. Zip code starts from SouthEast regions of the country and gets bigger as it goes to the Northwest regions of the country.\\
+\indent Then I tried the K-mean clustering to check clusters of data are related to the change of zip code. I used k = 2 since most of the plots we saw on the exploratory data analysis section showed two dominating answers for each question. Figure 5 shows the result of the clustering compared to the change of zip code. Sometimes, due to the random starting points, it gives wrong clusters, but most of the time, it gives clusters that are divided accordingly with the zip code as we expected.\\
+\indent To check which questions separated the groups, I plotted principal component scores. Figure 6 shows the plot of principal component scores. From the plot, we can see binary category 9, 198, 165, 170 affect mostly to the first two principal components. Q050 contains the binary category 9, Q076 contains the binary category 198, and Q073 contains both binary categories 165 and 170. So, I plotted Q050 vs. Q076 which affect mostly to the second principal component and plotted Q073 by itself which affects mostly to the first principal component.\\
+\\
+\includegraphics{50vs76.png}\\
+\\
+\includegraphics{73.png}\\
+\\
+These questions show clearer distinction between two dominating answers than other questions. Q050 and Q076 show clear distinction between SouthEast part of the country and Northwest part of the country. Q073 shows small but clear distinction of the response at the East end of the country.
+
+
+<<dim_red, echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE>>=
+
+# Encode data to binary
+toBinary <- function(data_row) {
+  result <- vector()
+  for(i in 1:length(data_row)){
+    binary_que <- rep(0,num_answer[i])
+    binary_que[as.numeric(data_row[i])] <- 1
+    result <- append(result,binary_que)
+  }
+  return(result)
+}
+
+binary_ling_data <- t(apply(as.matrix(ling_data[,5:71]),1,toBinary))
+
+# PCA
+ling_data_cov <- cov(scale(binary_ling_data))
+ling_data_eigen <- eigen(ling_data_cov)
+ling_data_rotated <- as.matrix(scale(binary_ling_data)) %*% ling_data_eigen$vectors
+ling_data_rotated <- as.data.frame(ling_data_rotated)
+colnames(ling_data_rotated) <- paste0("PC",1:468)
+
+ling_data_pcs <- cbind(ling_data, ling_data_rotated)
+@
+
+
+
+
+\subsection{Stability of findings to perturbation}
+\indent As I already mentioned above, k-mean cluster algorithm that I used to do the clustering uses different random starting points everytime and sometimes it gives bad clustering. Followings are two different clusterings that the algorithm with k = 2 gives:\\
+\\
+\includegraphics[width=0.5\textwidth]{cluster_1.png}\includegraphics[width=0.5\textwidth]{cluster_2.png}\\
+\\
+\indent Also, I perturbed the dataset by subsampling it and tried to do PCA with it to check whether the perturbed dataset still shows smooth continuum with zip code. However, the covariance matrix of the subsampled data is often positive indefinite and is not able to be decomposed. When it decomposes successfully, it shows smooth change as we wanted, but it does not happen everytime. Therefore, the analysis I did in this report is not stable enough. 
+
+
+\subsection{Conclusion}
+
+\indent In this report, an analysis of the lexical difference across the country was performed. The data contained large dimension and the PCA, which is the dimension reduction algorithm, was conducted to deal with the large dimension issue. As a result of PCA, I could do visualization of the dimension reduced data and found out that the lexical difference across the country is described by the change of the zip code. Also the data clustered using k-mean algorithm withouth the zip code information often divided successfully agreeing with the change of the zip code. The analysis I performed on this report is not stable, but with the large enough data and well-tuned starting points, I could acquire the analysis that explains data well enough.
+
+
+
+
+
+
+<<kernel_density_estimation, dev = "png", echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE, fig.cap="Kernel density estimations using different kernel functions and bandwidths">>=
+# note that the cache = TRUE chunk argument means that the results of this 
+# chunk are saved so it doesn't need to be re-run every time you compile the pdf
+
+# If you are using window, please run following commands manually on the command prompt before load the data
+# grep "epochNums" sonoma-dates >  sonoma-dates-epochNums.txt
+# grep "epochDates" sonoma-dates >  sonoma-dates-epochDates.txt
+# grep "epochDays" sonoma-dates >  sonoma-dates-epochDays.txt
+
+# load the dates data
+dates_orig <- loadDatesData(path = "data/")
+# clean the dates data
+dates <- cleanDatesData(dates_orig)
+
+# load the redwood sensor data
+redwood_all_orig <- loadRedwoodData(path = "./data/", source = "all")
+
+# clean the redwood sensor data
+redwood_all <- cleanRedwoodData(redwood_all_orig)
+
+# put correct times
+redwood_all <- inner_join(redwood_all, dates, by="epoch")
+
+#### remove nodes and obs mentioned above
+
+# remove the NA rows
+all_new <- filter(redwood_all, !is.na(humidity))
+
+# remove the erroneous entries and the weird outliers
+all_rm <- group_by(all_new, nodeid) %>% 
+  summarize(n = n(),
+            "Less than 1000 obs" = n() < 1000, 
+            "% Humidity < 0" = round(100*sum(humidity<0)/n), 
+            "% Temperature < 0" = round(100*sum(humid_temp < 0)/n), 
+            "% Incident PAR > 120,000" = round(100*sum(hamatop > 120000)/n))
+
+to_remove_all <- all_rm[which(apply(all_rm[,-c(1,2)],1,sum) >0),]
+
+
+# Each of these nodes are to be removed -- not enough data for any
+all_new <- filter(all_new, !(nodeid %in% to_remove_all$nodeid))
+
+# Gaussian kernel function
+gaussianKernel <- function(x, h) {
+  # A gaussian kernel function for use in nonparametric estimation.
+  # Args:
+  #  x: The point to evaluate the kernel
+  #  h: The bandwidth of the kernel.
+  # Returns:
+  #  The value of a kernel with bandwidth h evaluated at x.
+  
+  BaseKernel <- function(x) {
+    return(dnorm(x))
+  }
+  return((1 / h) * BaseKernel(x / h))
+}
+
+# Uniform kernel function
+unifKernel <- function(x, h) {
+  # An uniform kernel function for use in nonparametric estimation.
+  # Args:
+  #  x: The point to evaluate the kernel
+  #  h: The bandwidth of the kernel.
+  # Returns:
+  #  The value of a kernel with bandwidth h evaluated at x.
+  
+  BaseKernel <- function(x) {
+    return(dunif(x, -1, 1))
+  }
+  return((1 / h) * BaseKernel(x / h))
+}
+
+# Triangle kernel function
+triKernel <- function(x, h) {
+  # A triangle kernel function for use in nonparametric estimation.
+  # Args:
+  #  x: The point to evaluate the kernel
+  #  h: The bandwidth of the kernel.
+  # Returns:
+  #  The value of a kernel with bandwidth h evaluated at x.
+  
+  BaseKernel <- function(x) {
+    return(dtriangle(x, 0, -1, 1))
+  }
+  return((1 / h) * BaseKernel(x / h))
+}
+
+
+# Kernel density estimation
+EstimateDensity <- function(x.data, KernelFun, h, resolution=length(eval.x), eval.x=NULL) {
+  # Perform a kernel density estimate.
+  # Args:
+  #   x.data: The observations from the density to be estimated.
+  #   KernelFun: A kernel function.
+  #   h: the bandwidth.
+  #   resolution: The number of points at which to evaluate the density.  Only necessary
+  #               if eval.x is unspecified.
+  #   eval.x: Optional, the points at which to evaluate the density.  Defaults to
+  #           resolution points in [ min(x.data), max(x.data) ]
+  # Returns:
+  #  A data frame containing the x values and kernel density estimates with
+  #  column names "x" and "f.hat" respectively.
+  
+  if (is.null(eval.x)) {
+    # Get the values at which we want to plot the function
+    eval.x = seq(from = min(x.data), to = max(x.data), length.out=resolution)    
+  }
+  
+  # Calculate the estimated function values.
+  MeanOfKernelsAtPoint <- function(x) {
+    return(mean(KernelFun(x.data - x, h)))
+  }
+  f.hat <- sapply(eval.x, MeanOfKernelsAtPoint)
+  return(data.frame(x=eval.x, f.hat=f.hat))
+}
+
+gaussKDE2 <- EstimateDensity(all_new$humid_temp, KernelFun = gaussianKernel, h = 1, resolution = 100)
+
+gaussKDE3 <- EstimateDensity(all_new$humid_temp, KernelFun = gaussianKernel, h = 5, resolution = 100)
+
+unifKDE2 <- EstimateDensity(all_new$humid_temp, KernelFun = unifKernel, h = 1, resolution = 100)
+
+unifKDE3 <- EstimateDensity(all_new$humid_temp, KernelFun = unifKernel, h = 5, resolution = 100)
+
+triKDE2 <- EstimateDensity(all_new$humid_temp, KernelFun = triKernel, h = 1, resolution = 100)
+
+triKDE3 <- EstimateDensity(all_new$humid_temp, KernelFun = triKernel, h = 5, resolution = 100)
+
+p_gauss1 <- ggplot(gaussKDE2) +
+  geom_line(aes(x = x, y = f.hat)) + 
+  ylab("Frequency") + 
+  ggtitle("Gaussian Kernel function with h = 1") + xlab("Temperature")
+
+p_gauss2 <- ggplot(gaussKDE3) +
+  geom_line(aes(x = x, y = f.hat)) + 
+  ylab("Frequency") + 
+  ggtitle("Gaussian Kernel function with h = 5") + xlab("Temperature")
+
+p_unif1 <- ggplot(unifKDE2) +
+  geom_line(aes(x = x, y = f.hat)) + 
+  ylab("Frequency") + 
+  ggtitle("Uniform Kernel function with h = 1") + xlab("Temperature")
+
+p_unif2 <- ggplot(unifKDE3) +
+  geom_line(aes(x = x, y = f.hat)) + 
+  ylab("Frequency") + 
+  ggtitle("Uniform Kernel function with h = 5") + xlab("Temperature")
+
+p_tri1 <- ggplot(triKDE2) +
+  geom_line(aes(x = x, y = f.hat)) + 
+  ylab("Frequency") + 
+  ggtitle("Triangle Kernel function with h = 1") + xlab("Temperature")
+
+p_tri2 <- ggplot(triKDE3) +
+  geom_line(aes(x = x, y = f.hat)) + 
+  ylab("Frequency") + 
+  ggtitle("Triangle Kernel function with h = 5") + xlab("Temperature")
+
+grid.arrange(p_gauss1, p_gauss2, p_unif1, p_unif2, p_tri1, p_tri2, nrow = 3, ncol = 2)
+
+
+@
+
+<<loess, dev = "png", echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE, fig.cap="Temperature vs. Humidity at the same time of day and LOESS using linear(blue) and 3rd degree polynomial(red)">>=
+
+# Subset data for same time of day
+all_new_eqtime <- all_new[all_new$epoch %% 288 == 0,]
+all_new_eqtime <- all_new_eqtime[all_new_eqtime$nodeid != 145,]
+
+loess1 <- ggplot(all_new_eqtime) +
+  geom_point(aes(x = humidity, y = humid_temp)) + 
+  geom_smooth(aes(x = humidity, y = humid_temp), method = 'loess', span = 1) +
+  geom_smooth(aes(x = humidity, y = humid_temp), method = 'loess', span = 1, formula = y ~ poly(x, 3), col = 'red') +
+  ylab("Temperature") + 
+  ggtitle("LOESS with span = 1") + xlab("Humidity")
+
+loess2 <- ggplot(all_new_eqtime) +
+  geom_point(aes(x = humidity, y = humid_temp)) + 
+  geom_smooth(aes(x = humidity, y = humid_temp), method = 'loess', span = 10) +
+  geom_smooth(aes(x = humidity, y = humid_temp), method = 'loess', span = 10, formula = y ~ poly(x, 3), col = 'red') +
+  ylab("Temperature") + 
+  ggtitle("LOESS with span = 10") + xlab("Humidity")
+
+grid.arrange(loess1, loess2, ncol = 2)
+
+
+@
+
+
+
+
+
+
+
+<<screeplot, dev = "png", echo = FALSE, message = FALSE, warning = FALSE, fig.cap = "Screeplot of the linguistic data PCA">>=
+
+# calculate proportion of variance explained
+data.frame(prop_var = cumsum(ling_data_eigen$values) / sum(ling_data_eigen$values),
+           component = 1:ncol(binary_ling_data)) %>%
+  # plot a scree plot
+  ggplot(aes(x = component, y = prop_var)) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  ylab("Cumulative prop of variability explained") +
+  xlab("Principal component")
+
+@
+
+
+<<pca, dev = "png", echo = FALSE, message = FALSE, warning = FALSE, fig.cap = "Principal Component 2 vs Principal Component 1 with color changing according to Zip code">>=
+ggplot(ling_data_pcs) +
+  geom_point(aes(x = PC1, y = PC2, color = ZIP)) +
+  scale_color_gradient(low = "skyblue",high = "black")
+@
+
+
+<<cluster, dev = "png", echo = FALSE, message = FALSE, warning = FALSE, fig.cap = "Clustering data projected onto the first two principal components vs Fig.4">>=
+
+plotLabeledData <- function(x, y, labels=NULL) {
+  # Plot labeled data along two axes
+  # Args:
+  #   x: observation values for the first axis to plot over
+  #   y: observation values for the second axis to plot over
+  #   labels: factor giving the label of each point
+
+  plotting.data <- data.frame(X = x, Y = y, label = labels)
+  p <- ggplot(plotting.data) + 
+    geom_point(aes(x = X, y = Y, color = label))
+  return(p)
+  
+}
+
+k <- 2
+
+kmeans_raw <- kmeans(scale(binary_ling_data), center = k)
+
+p_raw <- plotLabeledData(ling_data_rotated[,1], ling_data_rotated[,2], labels = as.factor(kmeans_raw$cluster))
+
+p_state <- ggplot(ling_data_pcs) +
+  geom_point(aes(x = PC1, y = PC2, color = ZIP)) +
+  scale_color_gradient(low = "skyblue",high = "black")
+
+grid.arrange(p_raw, p_state, ncol = 2)
+
+@
+
+
+<<pc_score, dev = "png", echo = FALSE, message = FALSE, warning = FALSE, fig.cap = "Principal Component Scores">>=
+ling_data_prcomp <- prcomp(scale(binary_ling_data), center = FALSE, scale = FALSE)
+
+biplot(ling_data_prcomp, scale = 0)
+
+@
+
+
+
+
+
+
+\end{document}

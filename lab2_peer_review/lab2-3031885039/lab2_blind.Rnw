@@ -1,0 +1,561 @@
+\documentclass{article}
+
+\usepackage{geometry}
+\geometry{verbose,tmargin=1in,bmargin=1in,lmargin=1in,rmargin=1in}
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\setlength{\parskip}{\smallskipamount}
+\setlength{\parindent}{0pt}
+\usepackage{amsthm}
+\usepackage{amsmath}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{color}
+\newcommand{\subfloat}[2][need a sub-caption]{\subcaptionbox{#1}{#2}}
+\usepackage{csquotes}
+\renewcommand{\mkbegdispquote}[2]{\itshape}
+
+\begin{document}
+
+\title{Lab 2 - Linguistic Survey\\
+Stat 215A, Fall 2017}
+
+
+\author{}
+
+\maketitle
+
+<<r setup, include=FALSE>>=
+opts_chunk$set(dev = 'jpeg')
+@
+
+<<read_library, cache=FALSE, echo=FALSE, message=FALSE,warning = FALSE>>=
+#load in required packages
+library(tidyverse)
+library(forcats)
+library(lubridate)
+library(stringr)
+library(ggmap)
+library(maps)
+@
+
+<<load-data, echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE>>=
+
+#read in data
+lingdata<-read.table("~/Desktop/lab2/data/lingData.txt",
+                       header=TRUE)
+
+
+@
+
+
+\section{Introduction}
+
+This report will examine the dataset collected by the Harvard Dialect Survey (2003). In section 2 techniques for dealing with nonresponse are discussed and the relationship between two survey questions are investigated with illustrative maps plotted. In Section 3, the categorical data are encoded into binary variables and different dimension reduction and clustering methods are performed to gain insight into the underlying geographic groups of the respondents. I conclude the report with a discussion in Section 4. (The follow-up plots for lab 1 are presented in Section 5. )
+
+
+\section{The Data}
+
+The linguistic dataset contains the answers to the questions for 47,471 respondents across the United States. The dataset contains the variables ID, CITY, STATE, ZIP, Q50 - Q121 (a few questions in this range are left out), lat and long. The answers of the respondents are indexed by an integer. Some of the questions have as many as 21 choices while some have only 3. A zero indicates that the respondent did not answer the specific question. 
+
+
+\subsection{Data quality and cleaning}
+
+This dataset isn't as bad as the redwood data, but there are still
+some issues, mostly because some of the the test takers did not answer all the questions. There are about 1020 rows with missing lat and long values. Since those rows would be automatically left out during plotting, I did not delete any of them. Almost all questions have a non-response rate of 3\%, so I did not remove any of the questions.
+On the other hand, most respondents (over 40000 out of 47471) answered all the question while some of them answered less than a half. Missing more than 10 questions shows lack of care. Those respondents might not have taken the survey seriously and I removed the rows with more than 10 zeros (there are 1473 of them) and set other zeros to NA.  I also checked that the range of the answers match the number of choices provided in all.ans.
+
+
+\subsection{Exploratory Data Analysis}
+
+<<data-cleaning, echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE>>=
+NumofNonres <- rep(0,nrow(lingdata))
+for(i in 1:nrow(lingdata)){
+  
+  NumofNonres[i] = length(which(lingdata[i,] == 0))
+  
+}
+
+lingdata <- lingdata[-which(NumofNonres > 10),]
+#if a respondent missed more than ten questions, delete the entire row
+
+
+
+lingdata[lingdata == 0] <- NA
+#set zero values to na
+
+#focus on Q73 and Q105, only keep the most popular answers.
+lingdata$Q073[which(lingdata$Q073 !=1 & lingdata$Q073 !=6)] <- "others"
+
+lingdata$Q073[which(is.na(lingdata$Q073)==TRUE)] <- "others"
+
+lingdata$Q073[which(lingdata$Q073 ==1)] <- "sneakers"
+
+lingdata$Q073[which(lingdata$Q073 == 6)] <- "tennis shoes"
+
+
+lingdata <- lingdata%>%
+  mutate(rubber_soled_shoes = Q073)
+
+
+
+lingdata$Q105[which(lingdata$Q105>3)] <- "others"
+
+lingdata$Q105[which(is.na(lingdata$Q105)==TRUE)] <- "others"
+
+lingdata$Q105[which(lingdata$Q105 == 1)] <- "soda"
+
+lingdata$Q105[which(lingdata$Q105 == 2)] <- "pop"
+
+lingdata$Q105[which(lingdata$Q105 == 3)] <- "coke"
+
+
+lingdata <- lingdata%>%
+  mutate(sweetened_carb_bev = Q105)
+
+
+@
+
+
+<<echo = FALSE, fig-Q73Q105, fig.cap='Distribution of answers to Q73 and Q105, shown on a US map', fig.subcap=c('Q73', 'Q105'),message = FALSE, warning = FALSE, cache = TRUE, out.width='.6\\linewidth',fig.align = 'center'>>=
+
+library(ggmap)
+
+map <- get_map(location = 'United States', zoom = 4, color ='bw')
+#zoom =4 means scale=country
+
+#plot the distribution of answers for the two questions
+mapPoints <- ggmap(map) +
+  geom_point(aes(x = long, y = lat, col = rubber_soled_shoes), data = lingdata, size = .4, alpha = .3)
+plot(mapPoints)
+
+mapPoints <- ggmap(map) +
+  geom_point(aes(x = long, y = lat, col = sweetened_carb_bev), data = lingdata, size = .4, alpha = .3)
+plot(mapPoints)
+@
+
+Let us look at the following two questions: Q73 and Q105. The 73rd question is 
+\begin{displayquote}
+What is your *general* term for the rubber-soled shoes worn in gym class, for athletic activities, etc.?
+\end{displayquote}
+and choices include \textbf{a.sneakers} (45.50\%), \textbf{c.gymshoes}(5.55\%) and \textbf{f.tennis shoes} (41.34\%), among others. The 105th question is 
+
+\begin{displayquote}
+What is your generic term for a sweetened carbonated beverage?
+\end{displayquote}
+and choices include \textbf{a.soda} (52.97\%), \textbf{b.pop}(25.08\%) and \textbf{c.coke} (12.38\%), among others.
+
+The Kendall correlation for these two variables is 0.30, which is quite large for two categorical variables with more than 10 classes. The results of Q73 and Q105 are plotted on a U.S. map from the ggmap package, and is shown in Figure 1.
+
+It can be seen that the two questions (especially Q73) do define distinct geographic groups. Almost all respondents from northeastern US (NY, PA, NJ, CT, MA, VT, NH, ME)
+as well as some from California call athletic footwear ``sneakers", while respondents from other parts of the country call them ``tennis shoes". As for carbonated beverages, respondents from northeast and California call them soda while other respondents refer to them as either pop , a term commonly used in the northern part of US, or coke, which is more widely used in the south.
+
+As such, it is possible to predict the response of Q73 based on Q105 -- if one chooses 
+``soda" for Q105, he/she is likely to choose ``sneakers" for Q73. If a respondent choose ``tennis shoes" as their general term for rubber-soled shoes worn in gym class, he/she is likely to choose ``pop" or ``coke" for Q105.
+
+There are several other cliques of questions closely associated with each other. For example, questions related to the use of ``anymore" (Q54-57) and names for grandparents (Q68-71). These relationships will be examined more carefully in the following sections.
+
+\section{Dimension reduction methods}
+
+\subsection{Dimension reduction via PCA}
+
+I proceed to encode categorical data into binary variables. This produces a new data frame with $p=468$ variables. 
+
+For dimension reduction, I first used PCA. The eigenvalues of the covariance matrix is plotted in Figure \ref{fig:fig-eigenvalue}. The elbow of the eigenvalue curve corresponds to the $\approx 50$ largest eigenvalues. Due to high variance of the data, the first 2 principle components and the first 50 principle components can only explain 8\% and 56\% of total variance respectively.
+
+Since displaying the whole dataset can be challenging, I use a subset of the data to present the result of PCA. Figure \ref{fig:fig-PCA1} plotted the first two principle components for respondents from two states --New York and Texas. These two states are chosen because they have a large number (over 2600) of respondents. It can be seen that samples from the two states are well separated after projecting the original dataset onto this two dimension space. 
+
+<<ling-bin, echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE>>=
+for(i in 5:71){
+  
+  lingdata[,i] <- as.factor(lingdata[,i])
+  
+}
+
+#encode categorical variables into binary ones, the magic model.matrix function is used here.
+ling_bin = model.matrix(~ . + 0, data=lingdata[,5:71], contrasts.arg = lapply(lingdata[,5:71], contrasts, contrasts=FALSE))
+
+ling_bin_rep = ling_bin
+
+#calculate the covariance matrix and its eigen-decomposition
+cov_mat = cov(ling_bin)
+eigens <- eigen(cov_mat)
+eigenvalue <- eigens$value
+
+#do PCA
+ling_bin_pca <- prcomp(ling_bin)
+
+
+ling_by_state <- lingdata%>%
+  group_by(STATE)%>%
+  summarise(count=n())
+
+id = as.numeric(row.names(ling_bin))
+
+ling_bin <- as.data.frame(ling_bin)
+
+ling_bin <- ling_bin%>%
+  mutate(PC1 = (ling_bin_pca$x)[,1])
+
+ling_bin <- ling_bin%>%
+  mutate(PC2 = (ling_bin_pca$x)[,2])
+
+
+
+ling_bin <- ling_bin%>%
+  mutate(ID = lingdata$ID[id])
+
+
+#combine principle components with geographical information
+ling_bin <- merge(x = ling_bin, 
+                  y = lingdata,
+                  by.x = "ID",
+                  by.y = "ID")
+
+
+@
+
+<<fig-eigenvalue, fig.cap='Eigenvalues of the covariance matrix in decreasing order',echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE,out.width='.6\\linewidth',fig.align = 'center'>>=
+plot(eigenvalue, type='l')
+@
+
+<<fig-PCA1, fig.cap='The first two principle components of respondents from TX, NY and IL.',echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE, out.width='.6\\linewidth',fig.align = 'center'>>=
+
+#plot the principle components for three states
+library(tidyverse)
+ling_bin%>%
+  filter(STATE == 'TX'|STATE == 'NY'|STATE == 'IL')%>%
+  ggplot()+
+  geom_point(aes(x = PC1, y=PC2, col = STATE), size = 1, alpha= .2)
+@
+
+\subsection{Dimension reduction via NMF}
+Next, Non-negative Matrix Factorization is used as an alternative approach for dimension reduction. For this dataset, the main advantage of non-negative matrix factorization is that the basis computed by NMF has direct interpretation. 
+
+Due to heavy computational complexity of NMF algorithms, I use a subset of the data for matrix factorization. I randomly select 5000 rows from the complete dataset, and compute a rank 10 approximation
+$$X^T\approx WH,$$
+where $X$ is the $5000\times 468$ data matrix, $W$ is a $468\times 10$ basis matrix and $H$ is a $10\times 5000$ coefficient matrix. Intuitively, the 10 column vectors in $W$ can be understood as responses of 10 ``representatives", each representing a potential geographical group. The (answers of) respondents can then be seen as a mixture , or linear combination, of the (answers of) the 10 representatives.
+
+After fitting the model, I find that for almost all questions, only one of all possible answers corresponds to a value that is significantly larger than zero in each basis vector. For example, in the first basis vector, Q053b=2.02, Q053a=Q053c=0, Q058c=1.88, Q058a=Q058b=Q058d=$\dots$=Q058m=0, etc. This means that the basis can indeed be understood as a typical response to all the questions.
+
+Moreover, The result of non-negative matrix factorization echoes our findings in Section 2. The leading terms in the first four basis vectors are presented in Table 1.  We can see that the question\&choice combinations ``Q073sneakers" and ``Q105soda" appears simultaneously as leading features in the second basis vector. Figure 4 shows the coefficients of these two basis vectors for respondents from two states -- New York and Texas. We can see that the second coefficient NMF\_2(corresponding to basis vector2 in Table 1) is zero for most respondents from Texas, which indicates that few of them  answered ``sneakers" for Q73 or ``soda" for Q105. Similarly, a large proportion of respondents from the state of New York did not select choice \textbf{a.tp'ing} for Q106: \emph{What do you call the act of covering a house or area in front of a house with toilet paper?}
+
+\begin{table}
+\begin{tabular}{cccccc}\hline
+&Question\&Choice &Value & &Question\&Choice &Value \\\hline
+Basis vector 1&Q106a&2.47&Basis vector 2&Q073sneakers&3.48\\
+&Q072a&2.20&&Q105soda&2.46\\
+&Q068c&2.20&&Q109a&2.18\\
+&Q069c&2.17&&Q098a&2.09\\
+&Q115a&2.09&&Q080a&2.04\\
+&Q100d&2.07&&Q119a&2.00\\
+&Q064a&2.05&&Q056b&1.98\\
+&Q081a&2.05&&Q091b&1.93\\
+&Q053b&2.02&&Q079a&1.80\\
+&Q054b&1.99&&Q053b&1.76\\ \hline
+
+Basis vector 3&Q076d&2.86&Basis vector 4&Q120a&2.77\\
+&Q065a&2.44&&Q098a&2.35\\
+&Q103d&2.23&&Q050g&1.98\\
+&Q077a&1.92&&Q097e&1.94\\
+&Q089a&1.88&&Q051b&1.84\\
+&Q094b&1.87&&Q052b&1.83\\
+&Q097a&1.83&&Q115a&1.68\\
+&Q093b&1.80&&Q083g&1.59\\
+&Q051b&1.76&&Q104a&1.57\\
+&Q073tennis shoes&1.74&&Q087a&1.55\\\hline
+\end{tabular}
+\caption{Leading non-negative components in the first four basis vectors of the NMF fit. Each basis vector can be understood as the response of a ``representative".}
+\end{table}
+<<NMF,echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE,fig.align = 'center'>>=
+#fitting the NMF model takes 20 minutes, code for NMF can be found in the R folder starting at line 224, figure is saved as jpeg
+@
+
+\begin{figure}
+\centering
+\includegraphics[width=0.7\textwidth]{extra/nmf.png}
+\caption{The first two coefficients of the NMF fit, plotted for respondents from TX and NY.}
+\label{fig:nmf}
+\end{figure}
+
+\subsection{Clustering via kmeans}
+
+Although the dimension of the data $p=468$ is not small, the Euclidean distance between two rows is bounded by $\sqrt{2\times\text{Number of questions}}<12$. Therefore we can directly apply the kmeans algorithm to the full binary data. If we use PCA for dimension reduction before applying kmeans, we would have to keep the first 50 principle components to account for half the variance and the first 300 for 90\% of the variance, and it would be hard to identify the questions which separates the clusters. So PCA+k-means will only be used for validation.
+
+Figure \ref{fig:fig-NumofCluster} shows the average squared distance between each row and their corresponding cluster center. There is an elbow at $K=3$, so kmeans with number of cluster $K=3$ is applied. It will be shown in the following section that this choice also meets stability requirements. 
+
+75\% of the data is used to train the kmeans algorithm and obtain cluster centers, while the other 25\% is left for validation. Cluster assignments are shown in Figure \ref{fig:figkmeans}. The three groups shown on the map relate closely to geography.
+Specificly, group 1 (red) includes most of the southern states. Group 3 (blue) corresponds to northeastern states along the east coast while group 2 (green) mainly consists of states in the western and midwestern regions.
+
+%As another validation of the clustering algorithm, 
+
+Which responses define these groups? To answer this question, let's look at the coordinates of the cluster centers. These are the percentage of each choice for each question in the three groups. Figure \ref{fig:fig-question} shows the top ten question\&answer pairs for which the three groups respond most differently. We can tell from the figure that Q50, Q73, Q76, Q80, Q103 and Q105 contributes most to the separation of the groups.
+
+There is a continuum from Missouri and Illinois to Indiana and Ohio, as shown in Figure \ref{fig:fig-continuum}. In particular, respondents from the cities of St. Louis, Indianapolis, Cincinatti and Columbus are a mixture of the three groups. For example, in Indianapolis, 54.1\%, 35.0\% and 10.9\% of the the respondents belong to group 1 (red), 2 (green) and 3 (blue) respectively. Compare this to the city of New York, where 78\% of the respondents belong to group 3 (blue).
+
+To examine the questions that cause the continuum, let's focus on the subset of the data with latitude between 35 and 45 and longitude between -92 and -80, an area identified as the boundary of groups 1 and 2. As before, difference in the percentage 
+of each answer is calculated. Table 2 shows the questions with the most significant differences. We can see that the continuum is produced by Q76 (kitty-corner (Group 2) vs. catty-corner (Group 1)), Q103 (drinking fountain (Group 2) vs. water fountain (Group 1)), Q89 (can you call coleslaw `slaw'? yes (Group 1) vs. no (Group 2)) and Q105(coke (Group 1) vs. pop (Group 2)). 
+
+
+
+<<NumofCluster, echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE>>=
+
+#calculate within cluster sum of squares for different K
+withinss <- rep(0,10)
+for(k in 1:10){
+  #print(k)
+ling_specc <- kmeans(ling_bin_rep,centers = k)
+withinss[k] <- ling_specc$tot.withinss
+}
+
+#fit kmeans with k=3
+ling_specc_3 <- kmeans(ling_bin_rep,centers = 3)
+
+ling_bin <- ling_bin%>%
+  mutate(cluster = as.factor(ling_specc_3$cluster))
+@
+
+<<fig-NumofCluster, fig.cap='Average within cluster sum of squares for different number of clusters.',echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE,out.width='.6\\linewidth',fig.align = 'center'>>=
+plot(withinss/nrow(ling_bin_rep), xlab="Number of cluster", ylab="Average within-cluster sum of squares", type='l')
+@
+
+
+
+<<k-means, echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE>>=
+cluster = rep(0, nrow(ling_bin_rep))
+
+#use 75% of the data for training, and the ther 25% for validation.
+train = sample(nrow(ling_bin_rep),0.75*nrow(ling_bin_rep))
+#print(train[1:20])
+all = c(1:nrow(ling_bin_rep))
+val = all[-train]
+#print(val[1:20])
+kmeans_train = ling_bin_rep[train, ] 
+ling_kmeans_3 <- kmeans(kmeans_train,centers = 3)
+#cluster[train] = as.factor(ling_kmeans_3$cluster)
+
+
+###validation
+kmeans_val = ling_bin_rep[-train, ]
+closest.cluster <- function(x) {
+  cluster.dist <- apply(ling_kmeans_3$centers, 1, function(y) sqrt(sum((x-y)^2)))
+  return(which.min(cluster.dist))
+}
+cluster[train]<- apply(kmeans_train, 1, closest.cluster)
+cluster[-train]<- apply(kmeans_val, 1, closest.cluster)
+
+ling_bin <- ling_bin%>%
+  mutate(cluster = as.factor(cluster))
+@
+
+<<k-means2, echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE>>=
+#ling_kmeans_3 <- kmeans(ling_bin_rep,centers = 3)
+
+#find the questions that separate the groups.
+centers = ling_kmeans_3$centers
+
+#calculate the variance of the percentage of each answer across groups
+center_var = colSums(centers^2)/3-(colSums(centers)/3)^2
+topten = order(center_var, decreasing = TRUE)[1:10]
+#print(colnames(centers)[topten])
+
+quest_name = c("Q073a","Q073c","Q103d","Q103c", "Q105a","Q076a", "Q076d", "Q050i","Q080a","Q105b")
+quest_diff = data.frame(
+           Percentage = c(centers[1,topten], centers[2,topten], centers[3,topten]),
+           Question = rep(quest_name,3),
+           Group = as.factor(c(rep(3,10),rep(1,10),rep(2,10))))
+
+@
+
+
+
+<<figkmeans, fig.cap='The result of kmeans with $K=3$ clusters. 3/4 of the data is used for training (left panel), and the other 1/4 for validation (right panel)', fig.subcap=c('Training', 'Validation'),echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE,out.width='.45\\linewidth',fig.align = 'center'>>=
+
+
+#print(quest_diff)
+#print(centers[1,])
+
+###plot kmeans result
+map <- get_map(location = 'United States', zoom = 4, color ='bw')
+map%>%
+  ggmap() +
+  geom_point(aes(x = long, y = lat, col = cluster), data = ling_bin[train, ], size = .4, alpha = .4)
+
+
+map%>%ggmap() +
+  geom_point(aes(x = long, y = lat, col = cluster), data = ling_bin[val, ], size = .4, alpha = .3)
+
+
+@
+
+<<fig-question, fig.cap='(Question,answer) pairs that define the groups',echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE,out.width='.99\\linewidth',fig.align = 'center', fig.width = 6, fig.height = 3>>=
+#print(quest_diff)
+
+#barplot of answers
+ggplot(quest_diff,aes(x=Question,y=Percentage,fill=Group))+
+  geom_bar(stat="identity",position="dodge")
+@ 
+
+
+<<fig-continuum, fig.cap='The boundary of groups 1 and 2',fig.subcap=c('The whole region--MO, IL, IN, OH', 'The city of indianapolis-- balanced mixture of group 1 and group 2.'),echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE,out.width='.45\\linewidth',fig.align = 'center'>>=
+
+#zoom in around boundary
+
+map <- get_map(location = 'Indiana', zoom = 6, color ='bw')
+mapPoints <- ggmap(map) +
+  geom_point(aes(x = long, y = lat, col = cluster), data = ling_bin, size = .4, alpha = .3)
+plot(mapPoints)
+
+library(ggmap)
+map <- get_map(location = 'Indianapolis', zoom = 8, color ='bw')
+mapPoints <- ggmap(map) +
+  geom_point(aes(x = long, y = lat, col = cluster), data = ling_bin, size = 2, alpha = 1)
+plot(mapPoints)
+@
+
+\begin{table}
+\centering
+\begin{tabular}{cccccccccc}
+&Q103d&Q076d&Q089a&Q050i&Q105c&Q076a&Q103c&Q105b&Q089c\\\hline
+\textcolor{red}{Group 1}&86.4\%&70.3\%&76.8\%&39.2\%&34.3\%&12.5\%&11.7\%&22.6\%&15.7\%\\
+\textcolor{green}{Group 2}&27.9\%&15.1\%&36.8\%&3.55\%&4.20\%&74.3\%&61.3\%&59.9\%&46.1\%\\
+\end{tabular}
+\caption{(Question, choice) pairs that produce the continuum. The percentage of each answer in the boundary region (latitude between 35 and 45 and longitude between -92 and -80) is shown for group 1 and 2. For example, in this region, 86.4 percent of respondents who belong to group 1 answered d for Q103.}
+\end{table}
+
+
+<<robustness, echo = FALSE, cache = TRUE>>=
+
+#robustness analysis.
+  train = sample(nrow(ling_bin_rep),0.75*nrow(ling_bin_rep))
+
+  kmeans_train = ling_bin_rep[train, ] 
+  ling_kmeans_3 <- kmeans(kmeans_train,centers = 3)
+  center = ling_kmeans_3$centers[1,]
+  dist = rep(0,100)
+for(i in 1:100){ #draw 100 samples, each has 75% of the whole dataset
+  train = sample.int(nrow(ling_bin_rep),0.75*nrow(ling_bin_rep))
+#print(train[1:100])
+  kmeans_train = ling_bin_rep[train, ] 
+  ling_kmeans_3 <- kmeans(kmeans_train,centers = 3)
+  
+  dist[i] = min(sum((center-ling_kmeans_3$centers[1,])^2),sum((center-ling_kmeans_3$centers[2,])^2),sum((center-ling_kmeans_3$centers[3,])^2))
+  
+}
+  #print(dist)
+  #hist(dist)
+
+@
+
+<<robustness2, echo = FALSE, cache = TRUE>>=
+
+  train = sample(nrow(ling_bin_rep),0.75*nrow(ling_bin_rep))
+
+  kmeans_train = ling_bin_rep[train, ] 
+  ling_kmeans_3 <- kmeans(kmeans_train,centers = 3)
+  center = ling_kmeans_3$centers[1,]
+  dist2 = rep(0,100)
+for(i in 1:100){
+  train = sample.int(nrow(ling_bin_rep),0.75*nrow(ling_bin_rep))
+#print(train[1:100])
+  kmeans_train = ling_bin_rep[train, ] 
+  ling_kmeans_3 <- kmeans(kmeans_train,centers = 3)
+  
+  dist2[i] = min(sum((center-ling_kmeans_3$centers[1,])^2),sum((center-ling_kmeans_3$centers[2,])^2),sum((center-ling_kmeans_3$centers[3,])^2))
+  
+}
+  #print(dist)
+  #hist(dist)
+
+@
+
+<<fig-robust, fig.cap='Histogram of distance from cluster centers to the oracle center for different subset of the data. 3/4 of the whole dataset is drawn randomly for n=100 times.',echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE,out.width='.6\\linewidth',fig.align = 'center'>>=
+  
+  
+  qplot(sqrt(c(dist,dist2)),
+        binwidth =0.02,
+        xlim=c(0,0.2),
+        xlab = "Distance to oracle cluster center",
+        ylab = "Frequency")
+@
+
+\section{Stability of findings to perturbation}
+
+To analyze the robustness of kmeans, I draw $n=100$ samples of 75\% of the data and run the kmeans algorithm. This results in 100 sets of cluster centers. One of the cluster centers is treated as an oracle and the distance to this oracle is calculated for the other 99 cluster centers. Figure \ref{fig:fig-robust} shows the histogram of this distance. We see that the distance is typically around 0.1, which is fairly small. Note that the starting point of the kmeans algorithm is chosen randomly from the rows (a default setting of the R kmeans function), so sensitivity of the result to different starting points is included here. We conclude that the result of the kmeans algorithm is fairly robust. In general, this will be the case when the number of observations is much larger than the number of variables.
+
+\section{Discussion}
+
+We can see that Q73 and Q105 play a very important role in both dimension reduction and clustering. It would be helpful to apply dimension reduction algorithms designed specificly for binary data. Due to time and space limitations, this would be left for future research.
+
+\section{Kernel density plots and smoothing}
+
+The kernel density estimation is shown in Figure \ref{fig:kernel}. As bandwidth increases, the estimation becomes smoother. This can be explained by the following two properties of KDE. First, we know for each fixed $x$, the variance of the kernel density estimator at $x$ is proportional to $\displaystyle \frac{1}{nh}$ for small $h$, so when $h$ increases the variance drops. Second, the absolute value of the second derivative of KDE with respect to $x$ is given by
+the In fact, we have
+$$\hat f''_h(x)=\frac{1}{nh^3}\sum_{i=1}^n K''(\frac{x-x_i}{h})\to \frac{1}{h^3}\int_{-\infty}^{\infty}K''(\frac{x-y}{h})f(y)dy$$
+when $n$ is large, where $f$ is the true density of the data. When $h$ is small, 
+\begin{align*}
+|\frac{1}{h^3}\int_{-\infty}^{\infty}K''(\frac{x-y}{h})f(y)dy|&=|\frac{1}{h^2}\int_{-\infty}^{\infty}K''(z)f(x-zh)dz|\\
+&=|\frac{1}{h^2}\int_{-\infty}^{\infty}K''(z)(f(x)-zhf'(x)+o(h))dz|\\
+&=\frac{1}{h}|f'(x)\int zk''(z)dz|+o(\frac{1}{h}).
+\end{align*}
+Therefore when $h$ is small, the second derivative of KDE is roughly inversely proportional to $h$, and KDE is less smooth.
+
+
+
+For the loess smoother (Figure \ref{fig:loess}), we find that it fits the data better when a second degree polynomial is used and when the span parameter (smoothness parameter) is small. This is because using second degree polynomials introduces more parameters, and using a small span parameter reduces the smoothness and therefore the bias, as smoothing can be understood as a kind of regularization.
+
+\begin{figure}[h]
+\centering
+\begin{subfigure}[b]{0.45\textwidth}
+\centering
+\includegraphics[width=\textwidth]{extra/gaussian01.jpeg}
+\subcaption{Gaussian kernel, bandwidth = 0.1}
+\end{subfigure}
+\begin{subfigure}[b]{0.45\textwidth}
+\centering
+\includegraphics[width=\textwidth]{extra/gaussian05.jpeg}
+\subcaption{Gaussian kernel, bandwidth = 0.5}
+\end{subfigure}
+\begin{subfigure}[b]{0.45\textwidth}
+\centering
+\includegraphics[width=\textwidth]{extra/epa01.jpeg}
+\subcaption{Epanechnikov kernel, bandwidth = 0.1}
+\end{subfigure}
+\begin{subfigure}[b]{0.45\textwidth}
+\centering
+\includegraphics[width=\textwidth]{extra/epa05.jpeg}
+\subcaption{Epanechnikov kernel, bandwidth = 0.5}
+\end{subfigure}
+\caption{Kernel density estimation for the distribution of temperature with different kernels and different bandwidths.}
+\label{fig:kernel}
+\end{figure}
+
+
+\begin{figure}[h]
+\centering
+\begin{subfigure}[b]{0.45\textwidth}
+\centering
+\includegraphics[width=\textwidth]{extra/deg1spar04.jpeg}
+\subcaption{degree = 1, span =0.4}
+\end{subfigure}
+\begin{subfigure}[b]{0.45\textwidth}
+\centering
+\includegraphics[width=\textwidth]{extra/deg1spar075.jpeg}
+\subcaption{degree = 1, span =0.75}
+\end{subfigure}
+\begin{subfigure}[b]{0.45\textwidth}
+\centering
+\includegraphics[width=\textwidth]{extra/deg2spar04.jpeg}
+\subcaption{degree = 2, span =0.4}
+\end{subfigure}
+\begin{subfigure}[b]{0.45\textwidth}
+\centering
+\includegraphics[width=\textwidth]{extra/deg2spar075.jpeg}
+\subcaption{degree = 2, span =0.75}
+\end{subfigure}
+\caption{Temperature against humidity at 2pm, with a loess smoother with different bandwidths and the degrees of the polynomials}
+\label{fig:loess}
+\end{figure}
+
+
+\end{document}
