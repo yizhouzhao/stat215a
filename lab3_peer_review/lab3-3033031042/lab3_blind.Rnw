@@ -1,0 +1,161 @@
+\documentclass{article}
+
+\usepackage{geometry}
+\geometry{verbose,tmargin=1in,bmargin=1in,lmargin=1in,rmargin=1in}
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\setlength{\parskip}{\smallskipamount}
+\setlength{\parindent}{0pt}
+\usepackage{amsthm}
+\usepackage{amsmath}
+
+\begin{document}
+
+\title{Lab 3 - Parallelizing k-means Stat 215A, Fall 2017}
+
+\author{SID: 3033031042}
+
+\maketitle
+
+\section{Introduction}
+Asa Ben-Hur et. al. describe a stability-based model for determining the optimal number of clusters, $k$, to use for clustering algorithms.  Given some measure of similarity between two clusterings, the proposed method performs bootstrapping in order to generate two sub-samples of the original data set, and then compares the similarity between their resulting cluster assignments.  Repetition of this process enables a distribution of similarity scores to be attained for each choice of $k$, which can then lead a scientist to determine which choice of $k$ leads to the most ``stable" clustering.\\
+
+In this paper, we apply this notion of cluster stability on a linguistic survey data set that we previously had analyzed.
+
+\section{The model explorer algorithm}
+
+Asa Ben-Hur et.al. term their method of measuring cluster stability as the ``model explorer algorithm".  Here we will explain the components of the algorithm, and then explain how to parallelize its implementation.
+
+\subsection{Methods of similarity}
+
+First, Ben-Hur et. al. define several methods of calculating similarity between two clustering results.  Given the matrix representation $C_{ij}$ where the $i-th$ row and $j-th$ column are a 1 if $x_i$ and $x_j$ belong to the same cluster and 0 otherwise, then we can define the following similarity measures between two different clusterings, $C^{(1)}$ and $C^{(2)}$:
+
+\begin{itemize}
+\item \textbf{Number of pairs of points clustered together}, or formally, $\sum_{i,j} C_{ij}^{(1)} C_{ij}^{(2)}$.
+\item \textbf{Correlation of co-pairings}, or formally, $\frac{\sum_{i,j} C_{ij}^{(1)} C_{ij}^{(2)}}{\sqrt{\sum_{i,i} C_{ii}^{(1)} C_{ii}^{(2)} \sum_{j,j} C_{jj}^{(1)} C_{jj}^{(2)}}}$
+\item \textbf{Matching coefficient}, or the fraction of entries on which the two matrices agree.  Formally, $M(L_1,L_2) = \frac{N_{00} + N_{11}}{N_{00} + N_{01} + N_{10} + N_{11}}$ where $N_{ij}$ is the number of entries on which $C^{(1)}$ and $C^{(2)}$ have values $i$ and $j$ respectively.
+\item \textbf{Jaccard coefficient}, or the fraction of entries on which the two matrices agree, excluding ``negative" matches.  Formally, this is $J(L_1,L_2) = \frac{N_{11}}{N_{01} + N_{10} + N_{11}}$.
+\end{itemize}
+
+The following analyses will use \textbf{the correlation of co-pairings} as the similarity measure between two clusterings.
+
+\newpage
+\subsection{Algorithm}
+
+The basic algorithm is provided in Figure 2 of the paper:
+
+\begin{center}
+\includegraphics[scale=0.6]{extra/algorithm}
+\end{center}
+
+The algorithm works by repeatedly drawing two subsamples from the original data set, and then calculating the similarity between pairs of points that were drawn in both subsamples
+
+\subsection{Similarity score implementation}
+
+To make the similarity score calculation as fast as possible, the entire similarity matrix $C$ does not have to be calculated.  A significant speed-up can be achieved if \emph{only} pairs of observations that are clustered together in the first clustering are compared in the second clustering.
+
+Here is a simple illustration:
+
+\begin{figure}[h]
+\begin{center}
+\includegraphics[scale=0.7]{extra/comparisons}
+\caption{Visual illustration of the minimal comparisons necessary to calculate the correlation between two cluster assignments.}
+\end{center}
+\end{figure}
+
+\newpage
+And then some pseudocode:
+
+% NOTE: I include the source LaTeX here, but to prevent any issues with people not having
+% the correct "algorithm2e" package involved, I took a screenshot and incuded that instead.
+%
+% \begin{algorithm}[H]
+%  \KwData{cluster assignment 1, cluster assignment 2}
+%  \KwResult{correlation similarity score}
+%  count = 0\;
+%  \For{ki in 1:k}{
+%   current cluster = subset cluster assignment 1 to items in cluster $ki$\;
+%   \For{i in 1:length(current cluster)-1}{
+%   \For{j in (i+1):length(current cluster)}{
+%   \If{cluster assignment 2 for item i = cluster assignment 2 for item j}{
+%    count += 1\;
+%   }}}}
+%   \Return(normalized count);
+% \end{algorithm}
+
+\begin{center}
+\includegraphics[scale=0.4]{extra/pseudocode_correlation}
+\end{center}
+
+\subsection{Parallelization implementation}
+Since the above similarity score calculation involves nested for loops, using the ``foreach" method in R to parallelize the outer loop in R was a natural choice.
+
+\subsection{R vs. C++ implementation}
+Using the same approach to calculate the correlation between two cluster assignments as shown in Section 2.3, we note that the C++ implementation is notably faster: the table below shows how much faster it was for three different proportions of data drawn.
+
+\begin{center}
+\begin{tabular}{ |c|c|c|c| } 
+ \hline
+ proportion of data & R runtime / C++ runtime \\ 
+ \hline
+ 0.2 & 31.9 \\ 
+ 0.5 & 30.8 \\
+ 0.8 & 32.2 \\
+ \hline
+\end{tabular}
+\end{center}
+
+This suggests that the runtime of the C++ version is roughly 30 times faster than the runtime of the R version. The agreement between the R and C++ numerical result was confirmed in each case.
+
+\section{Results}
+
+\subsection{Optimal choice for $k$}
+
+The optimal choice for $k$ is quite decisively 3, from figures 2 and 3.\\
+
+Figure 2 highlights that the similarity scores between clusterings of different subsamples of data for $k=3$ are very stable, as indicated by their concentration at 1.  No other values of $k$ comes close to this amount of stability.\\
+
+Figure 3, whih shows the cumulative distributions of the correlation score for different values of $k$, also highlights that $k=3$ has the most values that are concentrated near 1.  Again, the CDF plot highlights that there is no other value of $k$ that comes close to having similarity scores concentrated towards 1 as much as the orange line depicted by $k=3$ does.
+
+<<recreate-figure-3-a, echo = FALSE, message=FALSE, warning=FALSE, fig.height = 5, fig.width = 5, fig.align='center', fig.pos='h', fig.cap="Histogram of the correlation similarity measure for different values of k">>=
+
+library(tidyverse)
+library(gridExtra)
+
+source("R/recreate_plots.R")
+
+setwd("~/Dropbox/Stat 215a/stat215a/lab3-3033031042")
+result_df <- load("data/results.csv")
+
+# plot similarity histograms in a 3x3 grid
+grid.arrange(grobs=lapply(c(2:10), plot_similarity_histogram),
+             ncol=3, top="Histograms of correlation similarity measure")
+@
+
+<<recreate-figure-3-b, echo = FALSE, message=FALSE, warning=FALSE, fig.height = 2.75, fig.width = 4, fig.align='center', fig.pos='h', fig.cap="CDF of the correlation similarity measure for increasing k">>=
+plot_cdf()
+@
+
+\clearpage
+
+\subsection{Discuss whether you trust the method or not}
+
+Ben-Hur et. al. have developed a very strong method for choosing an optimal choice of $k$ by assessing the stability of a clustering.  Stability is important in that it signals that the algorithm will likely be robust to changes in the training data, and therefore that the method's predictions are generalizable to broader data sets.
+
+In this particular data set, the optimal choice of $k=3$ is very prominent.  This may be surprising given that, in the previous lab, the optimal choice of $k$ that produced the most ``sensible" clusters was $k=5$.  However, in that case, the focus was on finding geographically-interpretable reasons and it may be understandable that $k=3$ was too broad of a clustering to distinguish between the southeast and southwest, for instance.
+
+This leads to a discussion of some of the algorithm's caveats:
+
+\begin{itemize}
+
+\item \textbf{Stability is not always the aim.} The primary reason to use this algorithm is to assess whether a clustering is stable, and for the stability to inform the choice of $k$.  As discussed above, this may not always be the aim.  If the aim is simply to learn more about what underlying structures might exist in the data, then a larger $k$ that provides finer discrimination may be helpful, for instance.
+
+\item \textbf{Computational intensity.} In order for the two drawn subsets to have meaningful overlap, the percentage of the original population that is subsampled in each step must be large enough, but also small enough that computing the similarity score is not prohibitively expensive.  For very large data sets, it may be hard to strike a balance between these two competing algorithmic needs.  However, the parallelizability of the tasks can help, given sufficient computing resources.
+
+\end{itemize}
+
+
+\section{References}
+1. Ben-Hur, Asa, Andre Elisseeff, and Isabelle Guyon. "A stability based method for discovering structure in clustered data." Pacific symposium on biocomputing. Vol. 7. 2001.
+
+\end{document}

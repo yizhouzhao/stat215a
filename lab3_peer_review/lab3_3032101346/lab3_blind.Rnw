@@ -1,0 +1,267 @@
+\documentclass{article}
+
+\usepackage{geometry}
+\geometry{verbose,tmargin=1in,bmargin=1in,lmargin=1in,rmargin=1in}
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\setlength{\parskip}{\smallskipamount}
+\setlength{\parindent}{0pt}
+\usepackage{amsthm}
+\usepackage{amsmath}
+
+
+\begin{document}
+
+\title{Lab 3 - Parallelizing $k$-means \\
+Stat 215A, Fall 2017}
+
+
+\author{3032101346}
+
+\maketitle
+
+\section{Introduction}
+
+There is a zoo of methods for determining the appropriate number of groups (hereafter referred to as $k$) to use in clustering a dataset. Claims of an `optimal' method for choosing $k$ should be met with suspicious eyes, for optimality refers to a specific objective, which varies from problem to problem. When the clusters are used only for subsequent prediction, cross-validation often yields results; however, when the clusters are to be interpreted as distinct groups with strong intra-cluster cohesion, predictive accuracy is no longer the most relevant measure. \smallskip
+
+If all of the points belong to a single cluster ($k=1$), then the data is, in a sense, maximally compressed; conversely, if all of the points belong to their own cluster ($k=n$), then the total error in the cluster assignments is zero (if the error does not penalize large $k$). Either extreme usually defeats the purpose of clustering, and standard methods for selecting $k$ in $k$-means trade off between the two. The {\sl elbow method} adds clusters until it reaches rapidly diminishing gains in explained variance. The {\sl silhouette method} summarizes the silhouette plots of various clusterings, say by the average value, choosing $k$ optimally. {\sl Information criteria} such as AIC and BIC can be applied by viewing $k$-means as a scaling limit of isotropic Gaussian mixture modeling. Similarly, scaling limits of Bayesian nonparametric methods [2] such as DP-means lead to their own penalties on $k$, whereas fully Bayesian approaches treat $k$ as fixed but unknown and hence model the data as a mixture of finite mixtures [3]. The gap-statistic method [4] maximizes the gap in the sum of squares objective relative to a reference distribution. Density-based clustering algorithms such as DBSCAN automate the selection process and can discover non-linearly separable clusters, whereas visualization-based methods (such as a dendrogram) more directly loop in the analyst in determining $k$. \smallskip
+
+Ben-Hur et al. [1] propose choosing $k$ based on the likelihood of clusterings on two subsamples producing similar results. One measure of similarity---called correlation---is based on whether two data points (present in both subsamples) co-occur in both clusterings. Specifically, let $\ell^{(1)}$ and $\ell^{(2)}$ denote the labelings on the overlap on the two subsamples, and define
+\begin{align}
+\texttt{corr}\left(\ell^{(1)}, \ell^{(2)}\right) = \frac{\sum_{ij}1_{\ell^{(1)}_i = \ell^{(1)}_j \,\&\, \ell^{(2)}_i = \ell^{(2)}_j }}{\sqrt{\left(\sum_{ij}1_{\ell^{(1)}_i = \ell^{(1)}_j }\right)\left(\sum_{ij}1_{\ell^{(2)}_i = \ell^{(2)}_j }\right)}}
+\end{align}
+Note that computing the denominator can be further simplified since $\sum_{ij}1_{\ell^{(1)}_i = \ell^{(1)}_j } = \sum_{k} \left(\sum_i 1_{\ell^{(1)}_i = k }\right)^2$. \smallskip
+
+In this lab, we look at the stability-based method of [1] for clustering a Dialect Survey conducted by Bert Vaux, containing the responses of $45152$ individuals across America to $68$ questions regarding features of spoken language. We cluster subsamples of the $45152 \times 468$ one-hot encoded response matrix {\tt ling} and repeatedly calculate the correlation measure of similarity between pairs of labelings ($N=100$ times for each value of $k$). We then inspect the empirical distribution of the similarity measure to see how large it is on average and how much it varies across iterations. 
+
+\newpage
+
+\section{Implementation}
+
+Ben-Hur et al. [1] refer to the algorithm described in Section 1 as the model explorer algorithm. We implement the model explorer algorithm in the {\tt code} directory in the repository containing this report. The script {\tt parallel.R} runs the algorithm in parallel for each $k\in\{2,\dots,10\}$. Each subsample uses $80\%$ of the {\tt ling} data. The inner loop over $N=100$ iterations is entirely contained in {\tt ClusterSim.R}. We ran the script {\tt parallel.R} on the SCF cluster by submitting {\tt job.sh}. The job use $9$ CPUs and terminated in under $2$ hours. \smallskip
+
+Getting the job to run in a reasonable amount of time required care for the computational bottlenecks. The built in $k$-means algorithm took about $1.7k$ seconds to run on one subsample of $q = \lfloor 0.8n\rceil = 36122$ datapoints. Subsampling was a much faster operation, but the other computationally intensive aspect of the model-explorer algorithm was computing the correlation similarity measure $\texttt{corr}\left(\ell^{(1)}, \ell^{(2)}\right)$ on the overlap of the two subsamples. Formula (1) indicates that the correlation may be computed via a double for loop, i.e. $q^2$ operations to compute the numerator and $\min(2kq,q^2)$ operations for the denominator. Such an algorithm is space-efficient, as it only requires tracking running totals; however, in R, this algorithm was prohibitively slow. We implemented this algorithm in C++ and linked it up with the model-explorer algorithm using RCpp. We also implemented a space-inefficient algorithm using comembership matrices, as described in [1]. In Table 1, we compare the timing of these functions on cluster labels of length $5000$, and see that the C++ version is much faster. \\
+
+\begin{centering}
+<<benchmark, echo = FALSE, message = FALSE, warning = FALSE, cache = TRUE>>==
+
+library('Rcpp')
+library('microbenchmark')
+
+# load R version of correlation function
+source('code/Corr.R')
+
+# load C++ version of correlation function
+sourceCpp('code/Corr.cpp')
+
+# length of membership vectors
+q <- 5000
+
+# number of labels to use
+k <- 3
+
+# generate random cluster labels
+cl1 <- sample(seq(k), q, replace = TRUE)
+cl2 <- sample(seq(k), q, replace = TRUE)
+
+# time the correlation calculation
+res <- microbenchmark(Corr(cl1,cl2),
+                      CorrCPP(cl1,cl2), 
+                      times=10)
+
+res <- res %>% 
+  # convert units to seconds
+  summary("s") %>%
+  # pull out subset of summary stats
+  select(min, median, max) %>%
+  # round times to nearest hundreth sec
+  round(2)
+# specify language of implementation
+row.names(res) <- c("R", "C++")
+
+# display res table
+kable(res)
+
+@
+\begin{quote}
+\textbf{Table 1:} Comparison of timing of C++ implementation of {\tt Corr} to R version. The correlation between random labelings of length $5000$ was computed $10$ times, and we report the minimum, median and maximum computing time in {\bf seconds}. For inputs of this size, the C++ implementation is two orders of magnitude faster and is memory-efficient.
+\end{quote}
+\end{centering}
+
+Finally, we note that our notation in this report matches the variable names in the code as well as in the lab assignment description, except that we refer to cluster labelings as {\tt cl} for short in the code.
+
+\section{Results}
+
+The empirical distribution of correlation score from the output of {\tt parallel.R} (as described in Section 2) is depicted in Figure 1 on the following page. The minimum correlation observed is just below $0.4$ and the maximum is above $0.99$. Overall, the empirical distributions appear to be stochastically decreasing for $k\ge 3$, meaning more and more mass is moved to the left end of the plot. This trend does not hold for $k=2$, however. The histogram for $k=2$ is roughly bimodal, with one mode centered well above $0.9$ and the other around $0.7$. Moreover, the modes have roughly equal mass. This suggests that there are two rough neighborhoods for the cluster labeling, and half of the time, the two runs of $k$-means converge to the same neighborhood and half of the time they converge to opposite neighborhoods. \smallskip
+
+The empirical cdf for $k=3$ dominates every other curve for almost every value of the correlation. The difference is so striking, especially in the plot of the histograms, that we need not worry about the randomness in measuring the similarity distribution for $N=100$ pairs of subsamples. Any summary of these empirical distributions, such as mean or median or maximum mode, would thus lead to the same conclusion that $k=3$ is the most stable in the sense of [1]. Hence we would choose $k=3$ according to the procedure outlined in [1]. We complicate this process and consider what sort of conclusions it could yield in our discussion in Section 4.
+
+\newpage
+
+\begin{centering}
+<<ecdf, echo = FALSE, message = FALSE, cache = TRUE, fig.width = 8, fig.height = 5>>==
+library("abind")
+
+# load job outputs (list of N = 100 similarity 
+# calculations for each k from 2 to 10)
+load('outputs/cluster_sim.RData')
+
+# convert to dataframe
+S <- data.frame(abind(result))
+# rename columns as values of k
+colnames(S) <- seq(2,length(S)+1)
+# convert to tall dataframe
+S <- melt(S)
+# now first column is value of k 
+# and second column is correlation
+colnames(S) <- c("k", "corr")
+
+ggplot(S, aes(x = corr, color = k)) + 
+  # create empirical cdf for each k 
+  stat_ecdf() +
+  # tighten x limits to be very close to domain of ecdf
+  scale_x_continuous(expand = c(0, 0.01)) +
+  # make labels more informative
+  labs(x = "Correlation Between Cluster Labellings",
+       y = "Cumulative Probability",
+       title = "Cumulative Distributions of Correlation") +
+  # center title
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  # change color scale to sequentials
+  scale_colour_brewer(palette = "Spectral", direction = -1)
+
+@
+\begin{quote}
+\textbf{Figure 1:} Above: overlay of the empirical cumulative distributions of the correlation similarity measure for increasing values of $k$ on the {\tt ling} binary response dataset; below: histogram of correlation. Using $k=3$ clusters gives the most concentrated distribution with high similarity.
+\end{quote}
+\end{centering}
+
+\begin{centering}
+<<hist, echo = FALSE, message = FALSE, cache = TRUE, fig.width = 6, fig.height = 4>>==
+
+ggplot(S, aes(x = corr)) + 
+  # create histogram of correlation
+  geom_histogram(color = "Blue") + 
+  # tighten x limits to domain of ecdf
+  scale_x_continuous(expand = c(0, 0)) +
+  # make labels more informative
+  labs(x = "Correlation Between Cluster Labellings",
+       y = "",
+       title = "Histogram of Correlation, for Various k") +
+  # eliminate gray background
+  theme_bw() + 
+  # center title
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  # make a different histogram for each value of k
+  facet_wrap( ~ k) 
+
+@
+\end{centering}
+
+\newpage
+
+\section{Discussion}
+
+In Figure 2 below, we plot the survey respondents colored by cluster assignment using $k=3$ means: \\
+
+\begin{centering}
+<<kmeans3, echo = FALSE, message = FALSE, cache = TRUE, fig.width = 6, fig.height = 4, dev = "png", dpi = 300>>==
+
+library(maps)
+library(maptools)
+library(tidyverse)
+
+# load data
+load("data/lingBinary.RData")
+
+# select cols with questions to create binary matrix
+ling <- lingBinary %>%
+  select(contains("Q"))
+ling <- matrix(as.numeric(unlist(ling)), 
+               nrow = nrow(ling))
+
+# load state dataframe from map data
+state_df <- map_data("state")
+
+# use 3 clusters as suggested by results section
+k  <- 3
+
+# cluster labels
+cl <- kmeans(ling, k)$cluster
+
+# add cluster labels to a dataframe containing location
+clustered_respondents <- select(lingBinary, c(lat,long))
+clustered_respondents$cluster <- factor(cl)
+
+# blank theme as in lab 2
+blank_theme <- theme_bw() +
+  # remove background, panels, axes; and center title
+  theme(plot.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        plot.title = element_text(hjust = 0.5)) 
+
+ggplot(clustered_respondents) +
+  # color each respondent by cluster assignment
+  geom_point(aes(x = long, y = lat, color = cluster), 
+             size = 0.5, alpha = 0.25) +
+  # plot state borders for reference
+  geom_polygon(aes(x = long, y = lat, group = group),
+               data = state_df, color = "black", fill = NA) +
+  # color points democratic blue, green party green or republican red 
+  scale_color_manual(values=c("#931621", "#232066", "#006900")) + 
+  # strip away background and axes
+  blank_theme +
+  # add title
+  labs(title="Kmeans Clustering of Respondents with k = 3")
+
+@
+\begin{quote}
+\textbf{Figure 2:} Coloring respondents by cluster using $k=3$ means. Recall that $k$-means does not have knowledge of the lat-long information. In this section we scrutinize the claim of whether our method for the selection of $k$ is a reliable source of insight into ``linguistic differences whose distribution is determined primarily by geography." [5]
+\end{quote}
+\end{centering}
+
+The results of Figure 1 offer a compelling story about how to choose $k$ using the data we were provided: the result is nontrivial (in that it did not compel us to choose the absolute smallest number of clusters possible) but the trend is clear (in that the empirical distributions are stochastically decreasing for $k\ge 3$). Even better still, Ben-Hur et al. essentially conjecture that similarities will only concentrate close to $1$ when there is real structure captured by a partition into $k$ groups. We could, at this point, announce that our measure of stability (correlation on pairs of subsamples) was all that we care about, that $k=3$ empirically minimizes this quantity, and so we will wipe our hands with the whole endeavor. Problem solved. \smallskip
+
+Not so fast! We are attempting to make a claim about the number of clusters or groupings in over $40,000$ Americans' responses to $68$ linguistic survey questions; actually, we would like to infer something about meaningful linguistic groupings of {\bf all} Americans. This is the whole point of dialectometry, not measuring the stability of a particular algorithm we used for exploratory analysis. Figure 2 {\sl does} suggest that the clustering did something interesting on a macro-level. There are several reasons why we might want to distrust the results of [1]; in particular, why there could be many more than $k=3$ distinct groups of respondents in the linguistic survey data. We discuss them in order of increasing severity. \newpage
+
+% point 1  - hiding the edge cases 1 and n
+% remedy 1 - these are artifacts of saying we want to cluster
+
+The first issue is a small point, that we technically are not interested in choosing $k$ to maximize the stability as measured in [1]. In particular, taking $k = 1$ or $k = n$ would yield a perfectly stable cluster every time, assuming our similarity metric is invariant to label switching (which they are and should be). That may seem pedantic: it may seem like we wouldn't want to do clustering if either of these were even plausible. But since $n$ is so large, taking $k = n - 1000$ would yield almost the exact same conclusion about stability even without subsampling. [1] addresses this issue by taking $k$ to be the largest number of clusters after which the clustering becomes unstable. This becomes a problem in our case, however, as $k=2$ itself is unstable. One might dismiss these comments by saying $k$ very small or very large are edge cases not meant to be interpreted in the same respect as the other $k$ we would find more meaningful, but it points at the difficulty of actually selecting $k\in \{1,\dots,n\}$. We emphasize that all of these are possible in the ``true underlying $k$" sense. It is possible that there are over $40000$ distinct linguistic groups in America, or that there are no meaningful groupings to be had. Our data and Figure 2 do seem to stand as strong evidence to the contrary, however. \smallskip
+
+% point 2  - high SNR in a Gaussian mixture
+% remedy 2 - maybe we just need to collect lots of data and pray
+
+For the second point we consider a different example. Consider data coming from a Gaussian mixture with $k=4$ components $\{\mu_k\}_{k=1}^4$ all with isotropic covariances $\sigma^2I$ with $\sigma^2$ known. Imagine that $\|\mu_1 - \mu_2\|_2$ and $\|\mu_3-\mu_4\|_2$ are small relative to $\frac{\sigma}{\sqrt n}$ (where $n$ is the number of observations) but the pairs are well separated from each other. This setting is a mix of high and low signal-to-noise ratio, but in particular telling $\mu_1$ and $\mu_2$ apart (or telling $\mu_3$ and $\mu_4$ apart) in this setting would be very difficult, and our process for selecting $k$ would most definitely find $k=2$ rather than $k=4$. We could play the same trick with many more pairs (or triples, or quadriples, etc.) of means and find that we in trying to distinguish between, say, $k=3$ and $k=1000$, we are very firm in our finding that $k=3$ even though we know (having generated the data) that in reality $k=1000$. \smallskip
+
+% point 3  - we have geographic information that 
+%            gets totally wiped and you can see it
+%            and it's really the same problem as 
+%            in point 2 plus imbalance in the nobs
+% remedy 3 - rethink our conclusion? 
+
+Perhaps our best hope in light of this second point is to collect lots of data and pray that we have escaped that regime (which depends implicitly on the dimension so is only harshened by the fact that we have $468$ columns in the {\tt ling} binary response matrix). But this hopelessness betrays all of our analysis of the {\tt ling} dataset in Lab 2. Therein, we saw some outstanding differences in the Miami dialect with the rest of the Southern states, but we also saw many questions on which they disagreed with the Northeast. In Southeastern Pennsylvania, we saw how stubbornly Philadelphians held onto calling sandwiches ``hoagies" despite every major city around them disagreeing, and a host of questions on which the Philadelphia area was in far stronger agreement than with the rest of the Northeast. We saw how scattered the Western half of the coastal US looked with so little data in comparison, and how states like Wyoming and Idaho had a surprising amount of variation even with relatively few respondents. \smallskip
+
+All told, there is too much richness in this data, too many subsets of questions which did seem to matter strongly to certain areas, too much local variation to wipe it all away and declare $k=3$. Using the method of Ben-Hur et al. [1], we should take comfort knowing that our macro-level breakdown of respondents into $3$ groups is a fairly stable result, such that we might even use it in a subsequent hierarchical analysis. But it is a step too far to suggest that this data only has $k=3$ clusters, let alone that Americans can be grouped into one of $3$ dialects.
+
+\vfill
+
+\section{References}
+
+[1] Asa Ben-Hur, Andr\'e Elisseeff, and Isabelle Guyon (2001). A stability based method for discovering structure in clustered data. {\sl Pacific symposium on biocomputing}, volume 7. \smallskip
+
+[2] Brian Kulis and Michael I. Jordan (2012). Revisiting $k$-means: new algorithms via Bayesian nonparametrics. {\sl Proceedings of the 29th international conference
+on machine learning.}
+
+[3] Jeffrey W. Miller and Matthew T. Harrison (2017). Mixture models with a prior on the number of components. {\sl Journal of the American Statistical Association.}
+
+[4] Rob Tibshirani, Guenther Walther, and Trevor Hastie (2001). Estimating the number of clusters in a dataset via the gap statistic. {\sl Journal of the Royal Statistical Society.}
+
+[5] John Nerbonne and William Kretzschmar (2003). Introducing computational techniques in dialectometry. {\sl Computers and the Humanities.}
+
+\end{document}
