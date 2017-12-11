@@ -218,8 +218,7 @@ ggplot(data = plot_table,aes(x = voxel,y = correlation,colour = type))+
 
 Figure 6 shows the correlations between predicted and real responses for each one of the 20 voxels. Generally, multiple LASSO performs slightly better than individual LASSO. We can also read from the figure that the range of correlations is from near 0 to the highest 0.6. The correlations for voxels 10,13,16,20 are the worst. Three different LASSO methods all show poor results for those voxels. This is probably because of locations of those voxels. 3D plot of the locations tells that voxel 10,13,16,20 all locate at the border, which may be the indication to try some non-linear models for those voxels.
 
-<<lambda plot, echo = FALSE, message=FALSE, warning=FALSE, fig.height = 3.5, fig.width = 8, fig.align='center', fig.cap="Histogram of the correlation similarity measure for different values of k">>=
-
+<<lambda plot, echo = FALSE, message=FALSE, warning=FALSE, fig.height = 3.5, fig.width = 8, fig.align='center', fig.cap="Mean and standard deviation lambda selections by random shuffling for Lasso(left) and Ridge(right) ">>=
 #Random shuffling to get different lambda in the cross-validation
 lasso_lambda = read.csv("data/output/lasso_lambda.csv")
 lasso_lambda$label = "Lambda.min"
