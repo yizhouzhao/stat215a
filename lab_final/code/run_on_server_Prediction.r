@@ -1,4 +1,6 @@
 
+#this file is not runnable, it need the more raw data sets, and ipython notebook on SCF server to show the training results.
+
 load("fMRIdata.RData")
 
 head(resp_dat)
