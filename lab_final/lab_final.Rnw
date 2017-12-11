@@ -1,0 +1,448 @@
+\documentclass{article}
+
+\usepackage{geometry}
+\geometry{verbose,tmargin=1in,bmargin=1in,lmargin=1in,rmargin=1in}
+\setlength{\abovecaptionskip}{-5pt}
+\setlength{\belowcaptionskip}{-5pt}
+\usepackage{fancyhdr}
+\usepackage{graphicx}
+\pagestyle{fancy}
+\setlength{\parskip}{\smallskipamount}
+\setlength{\parindent}{0pt}
+\usepackage{amsthm}
+\usepackage{amsmath}
+\usepackage{url}
+
+\begin{document}
+
+\title{Lab Final - Stat 215A, Fall 2017}
+
+
+
+\author{Yizhou Zhao}
+
+\maketitle
+
+\section{Introduction}
+
+<<Image and Wave, echo = FALSE, message=FALSE, warning=FALSE, fig.height = 4, fig.width = 4, fig.align='center', fig.cap="An example for fMRI experiment. The image has the round shape with 128 by 128 pixels with only gray scales. The images include figures, animals, natural sights and etc. All images were transformed into 16384 a vector. Figure 1 is image one rotated by 90 degree.">>=
+
+#Load required pacakges
+source("code/setup.R")
+
+#Load in data
+load("data/fMRIdata.RData")
+
+#Load in images 1-10
+load("data/output/samples.Rdata")
+
+#plot image 1 
+sample1 = matrix(unlist(images[1,]),128,128)
+sample1 = t(sample1[128:1,]) # rotation
+
+
+image(sample1,col = gray(1:128/129),axes = F)
+
+@
+
+Understanding how the human brain functions remains one of greatest challenges in medical and psychological research. Medical tools such as functional Magnetic Resonance Imaging (fMRI), which is a class of imaging methods developed to demostrate the metabolism in the brain, gives tangible ways for scientist to analysis the mechanism of visual cognition of human-beings. From  fMRI response from 1750 images collect by Gallant lab, I am trying to study what parts of our brain are active in visual processing and how they interact. 
+
+\section{Exploratory Data Analysis}
+
+\subsection{Data Background}
+Gallant lab provided me with several data sets:
+\begin{itemize}
+\item \textbf{Response of brain voxels.} During the fMRI, scientists recored the response of 20 voxels from 1750 images. The response of each voxel is a continuous variable, ranging from $-4.86$ to $4.78$.
+\item \textbf{Image data.} Each one of the 1750 images is a $128 \times 128$ images with gray scale.   
+
+
+
+\item \textbf{Wavelet Feature data.} Gabor wavelet pyramid transform the information of the image into frequency domain. The real part of 10921 Gabor wavelet is given and another non-linear transformation extracts the 10921 features from each image.
+
+\item \textbf{Voxel locations.} The 3D coordinates of the 20 voxels in the brain. Figure 3 shows the distributions of the responses for 20 voxels. All curves look similar from normal distribution and the differences between voxels are small. 
+
+\end{itemize}
+
+<<Voxel locations, echo = FALSE, message=FALSE, warning=FALSE, fig.height = 3.5, fig.width = 3.5, fig.align='center', fig.cap="3D plot of the locations of the 20 voxels. The distribution of the voxels is not exactly symmetric. Voxel 5, 6, 7, 8 are in the center, the voxels at the boarder are 10,11,16,20 and etc.">>=
+
+#load location data 
+rownames(loc_dat) = 1:20
+colnames(loc_dat) = c("x","y","z")
+loc_dat = data.frame(loc_dat)
+
+#3D plot for locations
+with(loc_dat, { s3d <- scatterplot3d(x, y, z,
+                axis = F, color="blue", pch=19, 
+                 type="h",main="3D plot of voxels",xlab="X",ylab="Y",
+                 zlab="Z")
+    s3d.coords <- s3d$xyz.convert(x, y, z) 
+    text(s3d.coords$x, s3d.coords$y,             # x and y coordinates
+         labels=row.names(loc_dat),               # text to plot
+         cex=.5, pos=4) 
+})
+@
+
+
+<<Density of response, echo = FALSE, message=FALSE, warning=FALSE, fig.height = 4, fig.width = 5, fig.align='center', fig.cap="Histogram of the responses of 20 voxels. All the density curves look similar to each other with a little difference at the center. Thus, it is not possible to distinguish voxels only from the distributions of the response.">>=
+
+#Examine the voxel response data set
+colnames(resp_dat) = paste0("V" ,as.character(1:20))
+density_resp = melt(resp_dat,id = colnames(resp_dat))
+colnames(density_resp) = c("id","voxel","response")
+
+#Plot the distribution of responses of each voxel
+ggplot(density_resp, aes(response, ..density.., col = voxel)) +
+  geom_density() + ggtitle("Density plot for the response") + guides(col=guide_legend(ncol=2))
+@
+
+
+
+\newpage
+
+\section{Training and analysis}
+
+\subsection{Methodology}
+The experiment in Kay's article upon fMRI based on mainly two stages. In the first stage, model estimation, fMRI data were recorded from visual areas while each subject viewed 1,750 natural images.Gabor wavelet pyramid described tuning along the dimensions of space, orientation and spatial frequency. In the second stage of Kay experiment, scientist tried to identify images from brain's response. I will only focus on the previous stage, to discover the relationship between the features of images and voxel responses. 
+
+I decided before training these methods on a few approaches:
+
+\begin{itemize}
+\item \textbf{Individual lasso without feature screening}: In this approach, I will treat the response of every voxel individually with all the 10921 features included. 
+\item \textbf{Individual lasso with feature screening}: As the same as the above method, I will treat the response of every voxel individually. However, I will apply some methods for dimensional reduction to get a pre-screening of the features. Specifically, inspired by Fan's book [3], Sure Independence Sampling will select $M$ features with the highest $M$ absolute correlation with responses. In my study, I select 1000 features from $fit\_feat$.
+\item \textbf{Multiple lasso regression}: This model treats all the response together as a matrix and preforms a multiple regression task.
+
+Also several regularization methods will be considered in our model including \textbf{AIC},\textbf{AICc},\textbf{BIC},\textbf{ESCV}[2] and \textbf{Mean square error}.
+\end{itemize}
+
+\subsection{Lasso}
+Lasso is the linear model trained with L1 penalty as regularization. The optimization objective for Lasso is:
+$$
+\frac{1}{2n}||Y-X\beta||^2_2+\lambda||\beta||_1
+$$
+Lasso is able to achieve both of these goals by forcing the sum of the absolute value of the regression coefficients to be less than a fixed value, which forces certain coefficients to be set to zero, effectively choosing a simpler model that does not include those coefficients. 
+
+\subsection{Feature Screening}
+Fan and Lv (2008) introduced Sure Independence Screening for variable screening via independent correlation learning that tackles ultrahigh dimensional linear models. Sure Independence Screening is a two-stage procedure.
+\begin{itemize}
+\item First filtering out the features that have weak marginal
+correlation with the response, effectively reducing the dimension $p$ to a moderate scale below the sample size $n$. In my study, I select $N$ features with highest $N$ absolute correlation with responses.
+\item Then performing variable selection and parameter estimation
+simultaneously through a lower dimensional penalized least squares method such as LASSO.
+\end{itemize}
+
+\subsection{Model selection}
+
+<<Lasso plot, echo = FALSE, message=FALSE, warning=FALSE, fig.height = 3.5, fig.width = 8, fig.align='center', fig.cap="Validation plots for lasso regression for voxel one. The left panel shows the trend of AIC,AICc and BIC. The middle one shows the mean square error and the right one is for ES-CV. Each different lambda is examined by 10-folds validation.">>=
+
+#Load in function to do Lasso/Ridge regression
+source("code/lasso.R")
+source("code/ridge.R")
+
+#Train-test split
+train_x = fit_feat[1:1400,]
+train_y = resp_dat[1:1400,]
+
+test_x = fit_feat[1401:1750,]
+test_y = resp_dat[1401:1750,]
+
+#Get AIC,AICc,BIC from cross-validation for voxel one
+CVtable = Get.IC.Table(train_x,train_y,1)
+
+#Plot AIC, BIC, AICc, ES-CV and MSE
+CVplot = melt(CVtable,id = "lambda")
+#colnames(CVplot) = c("lambda","","value")
+p1 = ggplot(data = CVplot,aes(x = lambda,y = value,colour = variable)) + geom_line() + ylim(c(-250,500)) + theme_bw()+theme(legend.justification=c
+(1,1),legend.position=c(1,1),legend.title=element_blank())
+
+cv.lasso.1 = cv.glmnet(train_x,train_y[,1],type.measure = "mse",nfolds = 10,nlambda = 100)
+
+cv.ridge.1 = cv.glmnet(train_x,train_y[,1],type.measure = "mse",nfolds = 10,nlambda = 100,alpha = 0)
+
+mse.lasso = data.frame(lambda = cv.lasso.1$lambda,MSE = cv.lasso.1$cvm,label = "lasso")
+
+mse.ridge = data.frame(lambda = cv.ridge.1$lambda,MSE = cv.ridge.1$cvm, label = "ridge")
+
+p2 = ggplot(data = mse.lasso, aes(x = lambda,y = MSE)) + geom_line()+theme_bw()
+
+#Lasso ESCV results got after running about half an hour on the server 
+ESCV = read.csv("data/output/ESCV1.csv")
+p3 = ggplot(data = data.frame(lambda = CVtable$lambda[50:1],
+        ESCV = ESCV$x), aes(x = lambda,y = ESCV)) + geom_line() + theme_bw()
+
+grid.arrange(p1,p2,p3, ncol = 3)
+
+@
+In my model, I divide my data into 1400 samples for training and validation, and the rest 350 for testing. The cross-validation process for LASSO has 100 different values for hyper parameter $\lambda$, and each validation has ten folds.
+
+The above figure 4 gives an example of applying different model selection criteria.  BIC shows a special pattern and it keeps going down when $\lambda$ increases. I cannot choose BIC criterion in this case because it does not provide me with any meaningful insight for $\lambda$. The trends of AIC, AICc, MSE and ESCV are similar to each other, with the $\lambda$ minimizing those criteria close to $0.06$. It is worth mentioning that ESCV has a slight different pattern: dropping really fast to zero and then slowly going up as $\lambda$ increases.  
+
+I mainly use MSE as reference; however, I am not choosing the $\lambda$ that minimizes mse. We often use the "one-standard-error" rule when selecting the best model; this acknowledges the fact that the risk curves are estimated with error, so errs on the side of parsimony. We often use the "one-standard-error" rule when selecting the best model; this acknowledges the fact that the risk curves are estimated with error, so errs on the side of parsimony[4]. By following this suggestion, I choose $lambda.1se$ as hyper-parameter for the rest of my analysis.
+
+
+<<Ridge plot, echo = FALSE, message=FALSE, warning=FALSE, fig.height = 3.5, fig.width = 6, fig.align='center', fig.cap="Ridge regression for voxel one with criterion ES-CV and MSE. ">>=
+
+#Ridge ESCV results
+ESCV_ridge = read.csv("data/output/ESCV_ridge.csv")
+cv.ridge.1 = cv.glmnet(train_x,train_y[,1], alpha = 1, type.measure = "mse",nfolds = 10, nlambda = 100)
+
+p3 = ggplot(data = data.frame(lambda = cv.ridge.1$lambda[1:50],
+        ESCV = ESCV_ridge$x), aes(x = lambda,y = ESCV)) + geom_line() + theme_bw() 
+
+p4 = ggplot(data = data.frame(lambda = cv.ridge.1$lambda,
+        MSE = cv.ridge.1$cvm), aes(x = lambda,y = MSE)) + geom_line()+ theme_bw()
+
+grid.arrange(p3,p4,ncol = 2)
+@
+
+\subsection{Model Diagnosis}
+
+For comparison, I use another regularized linear model: ridge regression in my analysis. I first run ridge regression for the response of the first voxel as an example. Since the parameters of Ridge regression do not necessarily shrink to $0$, to AIC, AICc or BIC criteria are meaningless. Figure 5 shows the ESCV scores and means squares for different hyper-parameter $\lambda$.As $\lambda$ goes up, ESCV goes down with several irregular results(for example when $\lambda$ is near $0.2$). The mean square reaches the minimum at $0.063$, which is close to $\lambda$ minimizing the mse in Lasso.  
+
+
+<<Correlation plot, echo = FALSE, message=FALSE, warning=FALSE, fig.height = 3.5, fig.width = 6, fig.align='center', fig.cap="Correlations for test set for all the voxels from individual Lasso regression without feature screening, individual Lasso with feature screening and multiple Lasso regression with feature screening. The lambda of each is chosen as lambda.1se.">>=
+
+#Correlation results were got by running R script on SCF server
+lasso_cor = read.csv("data/output/lasso_cor.csv")
+multiple_lasso_cor = read.csv("data/output/multiple_lasso_cor.csv")
+screen_lasso_cor = read.csv("data/output/screen_lasso_cor.csv")
+
+cor_table = data.frame(voxel = 1:20,lasso_cor,multiple_lasso_cor,screen_lasso_cor)
+plot_table = melt(cor_table,id = "voxel")
+colnames(plot_table) = c("voxel","type","correlation")
+
+
+ggplot(data = plot_table,aes(x = voxel,y = correlation,colour = type))+
+  geom_point() + geom_line(size = 0.5)+ theme_bw()
+
+@
+
+Figure 6 shows the correlations between predicted and real responses for each one of the 20 voxels. Generally, multiple LASSO performs slightly better than individual LASSO. We can also read from the figure that the range of correlations is from near 0 to the highest 0.6. The correlations for voxels 10,13,16,20 are the worst. Three different LASSO methods all show poor results for those voxels. This is probably because of locations of those voxels. 3D plot of the locations tells that voxel 10,13,16,20 all locate at the border, which may be the indication to try some non-linear models for those voxels.
+
+<<lambda plot, echo = FALSE, message=FALSE, warning=FALSE, fig.height = 3.5, fig.width = 8, fig.align='center', fig.cap="Histogram of the correlation similarity measure for different values of k">>=
+
+#Random shuffling to get different lambda in the cross-validation
+lasso_lambda = read.csv("data/output/lasso_lambda.csv")
+lasso_lambda$label = "Lambda.min"
+lasso_lambda$label.2 = "Lambda.1se"
+
+lasso_lambda_1 = lasso_lambda[,c(1,2,3,6)]
+colnames(lasso_lambda_1) = c("voxel","lambda","sd","label")
+lasso_lambda_2 = lasso_lambda[,c(1,4,5,7)]
+colnames(lasso_lambda_2) = c("voxel","lambda","sd","label")
+lasso_plot = rbind(lasso_lambda_1,lasso_lambda_2)
+
+pd <- position_dodge(0.1)
+
+p1 = ggplot(lasso_plot, aes(x=voxel, y=lambda, colour=label)) + 
+    geom_errorbar(aes(ymin=lambda-sd, ymax=lambda+sd), position=pd) +
+    geom_line(position=pd) +
+    geom_point(position=pd, size=3) + theme_bw()
+
+ridge_lambda = read.csv("data/output/ridge_lambda.csv")
+ridge_lambda[2:5] = ridge_lambda[2:5]/1000
+ridge_lambda$label = "Lambda.min"
+ridge_lambda$label.2 = "Lambda.1se"
+
+ridge_lambda_1 = ridge_lambda[,c(1,2,3,6)]
+colnames(ridge_lambda_1) = c("voxel","lambda","sd","label")
+ridge_lambda_2 = ridge_lambda[,c(1,4,5,7)]
+colnames(ridge_lambda_2) = c("voxel","lambda","sd","label")
+ridge_plot = rbind(ridge_lambda_1,ridge_lambda_2)
+
+
+p2 = ggplot(ridge_plot, aes(x=voxel, y=lambda, colour=label)) + 
+    geom_errorbar(aes(ymin=lambda-sd, ymax=lambda+sd), position=pd) +
+    geom_line(position=pd) +
+    geom_point(position=pd, size=3)+ theme_bw()
+
+
+
+grid_arrange_shared_legend(p1,p2,ncol = 2)
+
+@
+
+Figure 7 plots the lambda chosen for Lasso and Ridge shows that the regression results for different voxels vary from image to image. For each voxel, the Lasso/Ridge regression was run ten times with the 80\% training data random shuffled. The lambda.1se is the most stable index with the least average standard deviation(0.0545) among all the voxels. In Ridge regression, the lambda.1se for voxels 10, 11, 13, 16, 20 are significantly lower than the rest, indicating again the regularity of those voxels.
+
+In fact, the features select from LASSO if rather stable. The left panel in figure 8 plots the frequencies of times of being selected for all the features. I should remind that most of the features were never selected in the 10 training processes, some of the features were selected one or two times. However, it is worthing mentioning that there are a dozen of features being selected every time regardless of the random shuffling. Those features(1111,1238,1397, 1408,...,5448) are considered to be the most significant and most stable ones. The right panel shows the mean of mean square error for each voxel, which is in line with the correlation plot(figure 6): the voxels with higher MSE have lower correlations. 
+
+
+<<Feature plot, echo = FALSE, message=FALSE, warning=FALSE, fig.height = 3.5, fig.width = 7, fig.align='center', fig.cap="Tesing the stability of multiple Lasso regression by random shuffling 10 times the training data set and take 80 percent of the sample for training. The left panel shows the freqencies of the selected features in the training processes. The frequency zero is omitted. The right panel shows the mean of MSE for each voxel.">>=
+
+#feature selection and MSE from random shuffling were got by running scripts on #server, too
+load("data/output/feature_map.Rdata")
+feature_freq = data.frame(frequency = feature_map[which(feature_map > 0)])
+
+#Histogram
+p1 = ggplot(feature_freq, aes(frequency)) +
+  geom_histogram(binwidth = 1) + theme_bw()
+
+mse = read.csv("data/output/mse.csv")
+colnames(mse) = "mse"
+mse$voxel = 1:20
+
+#Line plot
+p2 = ggplot(data = mse,aes(x = voxel,y = mse)) + geom_point() + geom_line() + theme_bw()
+
+grid.arrange(p1,p2,ncol = 2)
+@
+
+
+\subsection{Interpretation}
+This part is for the interpretation for the best LASSO method--the multiple regression. In details, after trying $\lambda$ for cross-validation and choosing the one with least mean square loss, I get the model with $120$ features(including one constant term).
+
+My regression model indicates that voxels respond to contrast in certain directions and in particular areas of an image. Most important features seem to consider only upper half of image, with few on the border. 
+
+<<wavelet plot, echo = FALSE, message=FALSE, warning=FALSE, fig.height = 4, fig.width = 4, fig.align='center', fig.cap="Plot of the real parts of Gabor wavelets weighted by the coefficients selected by multiple Lasso regression. Gabor wavelets have different scales, angles and locations. The feature waves selected by Lasso tend to be have small scales, all kinds of angles and concentrated locations.">>=
+
+#Selected wave from Multiple Lasso Regression
+load('data/output/select_wav.Rdata')
+select_wav$sum = rowSums(select_wav)
+
+#Stack all the waves together in one plot
+area = matrix(unlist(select_wav$sum),128,128)
+area = t(area[128:1,])
+image(area,col = gray(1:128/129),axes = F)
+@
+
+Figure 9 shows the collection of the real parts of the Gabor wavelets which are selected as the features from LASSO. I got several inspirations from the figure. First, the Gabor waves gather at the top left and top right parts of the image, which may be due to the habit of observation: we start looking the top left part and then come to top right part. Interestingly, the exact center of the image does not draw much attention; however, the area around the center is usually the most significant part of the image. Second, the scale of wavelets are really small, meaning that we see objects from local characteristics and those local characteristics may arouse the strong reaction from our brains.  
+
+<<mtcars-subplots, echo = FALSE, message=FALSE, warning=FALSE, fig.height = 3, fig.width = 6, fig.align='center', fig.cap = "Plot of Image-10(left panel) and the image convoluted by the real part all the selected wavelets(right panel).">>=
+
+#Load in one example
+load("data/output/samples.Rdata")
+sample1 = matrix(unlist(images[10,]),128,128)
+sample1 = t(sample1[128:1,])
+par(mar=c(1,1,1,1),mfrow = c(1,2))
+
+
+#Filtering by the wavelets selected with gaussian blur
+image(sample1,col = gray(1:128/129))
+sample2 = sample1 * as.matrix(blur(as.im(area),4))
+image(sample2,col = gray(1:128/129),axes = F)
+@
+
+Figure 10 gives a more concrete example. the circle shape of the image makes us focus on the center. And upper left part draws most of our attention, then right part and the center.
+
+
+%---------------------------------
+%---------------------------------
+
+\newpage
+
+\section{Prediction}
+My previous study indicates that the voxels on the border(10,13,16,20) are different from the voxels in the center according to the correlations in the testing part. By separating the voxels into several groups and apply different models to the group could probably get a better result in prediction. I will apply the kmeans algorithm for clustering first and the gap statistics to decide the number of clusters.
+
+<<Cluster, echo = FALSE, message=FALSE, warning=FALSE, fig.height = 2.6, fig.width = 6, fig.align='center', fig.cap="Plot of gap statistics for clustering.">>=
+
+#source functions for clustering
+source('code/cluster.R')
+
+k2 = kmeans(t(resp_dat),centers = 2)
+
+#plot gaps statistics
+plot(gap,ylim = c(0.1,0.25),main = "Gap statistics for kmeans clustering")
+abline(v=2, lty=2, lwd=1, col="Blue")
+
+@
+
+Even though figure 11 tells that the gap statistics reaches maximum in the case of only one cluster,  the gap statistics of two clusters is just slightly lower. Inspired by the results of correlations from Lasso regression and the lambda.1se chosen in Ridge regression, I decided to divided the voxels into two groups. 
+
+<<cluster plot, echo = FALSE, message=FALSE, warning=FALSE, fig.height = 3.5, fig.width = 7.5, fig.align='center', fig.cap = "Cluster results from kmeans and hierarchical clustering. Kmeans shows a more intuitive grouping: inner voxels and outer voxels">>=
+par(mar=c(1,1,1,1),mfrow = c(1,2))
+
+#Plot clustering results
+loc_dat$cluster = k2$cluster
+
+with(loc_dat, {
+   s3d <- scatterplot3d(x, y, z,axis = F,        # x y and z axis
+                 color=cluster, pch=19,        # filled blue circles
+                 #type="h",                    # vertical lines to the x-y plane
+                 main="Kmeans clustering for voxels",
+                 xlab="X",
+                 ylab="Y",
+                 zlab="Z")
+    s3d.coords <- s3d$xyz.convert(x, y, z) # convert 3D coords to 2D projection
+    text(s3d.coords$x, s3d.coords$y,             # x and y coordinates
+         labels=row.names(loc_dat),               # text to plot
+         cex=.5, pos=4)           # shrink text 50% and place to right of points)
+    legend("topleft", inset=.05,      # location and inset
+    bty="n", cex=.5,              # suppress legend box, shrink text 50%
+    title="cluster",
+    c("1", "2"), fill=c("red", "black"))
+})
+
+h1 = hclust(dist(t(resp_dat)))
+hcd = as.dendrogram(h1)
+# alternative way to get a dendrogram
+plot(hcd,main = "Hierarchical clustering for voxels")
+# add axis
+@
+
+Hierarchical Clustering and Kmeans shows similar results. Hierarchical clustering distinguish voxel 13 from all other voxels, then the group of voxel 10,16 and 20. \\
+
+\begin{table}
+  \centering
+  \begin{tabular}{c c}
+  \hline
+    Multiple Lasso Regression & Individual Random Forest\\
+    \hline
+    V1,V2,V3,...,V9,V12,V14,V15,V17,V18,V19&V10,V11,V13,V16,V20\\
+    \hline
+    &\\
+    % body of tabular environment 
+  \end{tabular}
+  \caption{Two prediction models} \label{tab:sometab}
+\end{table}
+
+Table 1 shows the "mixed model" I used for prediction. For the inner voxels, Lasso and Ridge are good enought for prediction. However, Random forests are an ensemble learning method that combine the prediction of multiple component decision
+trees in order to make a probabilistic determination of the class of an input.
+When training random forests, I consider:
+\begin{itemize}
+\item \textbf{Number of trees}: Usually, more trees lead to a more stable prediction. Since each tree uses different baseline data and different features, overfitting is usually not a big concern. However, the time espense for high dimensional data is so high.
+\item \textbf{A moderate number of maxnodes}: A deep tree may result from overfitting; and few maxnodes suffer from underfitting. 
+
+\begin{table}
+  \centering
+  \begin{tabular}{c c c}
+    Voxel & Correlation of Random Forest & Correlation of Lasso Regression\\
+    \hline
+    10&0.19&0.19\\
+    11&0.38&0.34\\
+    13&0.27&0.21\\
+    16&0.21&0.24\\
+    20&0.15&0.11\\
+    \hline
+    &\\
+    % body of tabular environment 
+  \end{tabular}
+  \caption{Comparison between two prediction models.} \label{tab:sometab}
+\end{table}
+
+Tuning those two variable took me a long time. Finally I selected the number of trees to be $1000$ and maxnodes of one tree to be $100$. The training time last ten hours on the SCF clusters. I did not try parallel computing and it seemed that it was the biggest mistake I made. Table 2 shows the testing correlations of those two methods. Random forest regression is slightly better. 
+
+
+\end{itemize}
+
+\section{Conclusion}
+In this report, I have explored and modeled various regression methods to perform analysis voxel responses from fMRI, based
+on Gabor wavelet features of images. My data are all of high dimensions, each picture has $16384$ pixels and $10921$ features for wavelets. Regression models were trained on 80\% of the data.
+
+Features were extracted mainly from Lasso regression. Ridge regression was also conducted, but only for comparison. Validity of several Lasso models was assessed via correlations and cross -validation technique with some model selection criterion such as AIC and BIC. ESCV turns out be another strong model selection criteria, which has similar results as AIC and AICc.
+
+For prediction clustering methods were performed to separate the voxels into inner ones and out ones. I just used the Lasso regression model for the prediction of the inner ones, and applied random forest to predict the responses of outer voxels.
+
+Careful analysis leads me to identify that geographical locations of voxels do have a strong influence on the response. Feature waves that I extracted mainly focus on the upper center of pictures, are likely due to the habit when we see pictures.
+
+
+\section{Reference}
+[1] Identifying natural images from human brain activity, Kendrick N. Kay, Thomas Naselaris, Ryan J. Prenger, Jack L. Gallant, Nature, 06713.
+
+[2] Estimation Stability with Cross Validation, Chinghway Lim, Bin Yu,arXiv:1303.3128v1, 2013
+
+[3] Sure independence screening for ultrahigh dimensional feature space, Jianqing Fan, Jinchi Lv, 10.1111/j.1467-9868.2008.00674.x, 2008
+
+[4] Regularization Paths for Generalized Linear Models via Coordinate Descent,Jerome Friedman, Trevor Hastie, Rob Tibshirani, Journal of Statistical Software, Volume 33, Issue 1, 2011.
+
+
+
+\end{document}
